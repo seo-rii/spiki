@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 
+use serde_json::json;
 use spiki_core::model::{FileEdit, Position, Range, Scope, SemanticEnsureInput, TextEdit};
 use spiki_core::text::{
     file_uri_from_path, fingerprint_for_file, read_text_file, set_scan_log_path_for_test,
@@ -175,6 +176,20 @@ fn workspace_status_can_index_paths_removed_from_default_excludes() {
         .unwrap();
 
     assert_eq!(output.coverage.unwrap().files_indexed, Some(1));
+}
+
+#[test]
+fn search_text_input_rejects_unknown_fields() {
+    let error = serde_json::from_value::<SearchTextInput>(json!({
+        "query": "needle",
+        "scope": {
+            "includeDefaultExcluded": true,
+            "unexpected": true
+        }
+    }))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("unexpected"));
 }
 
 #[test]

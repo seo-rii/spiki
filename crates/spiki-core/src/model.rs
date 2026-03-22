@@ -1,15 +1,16 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Position {
     pub line: u32,
     pub character: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Range {
     pub start: Position,
     pub end: Position,
@@ -30,8 +31,8 @@ pub struct Warning {
     pub severity: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FileFingerprint {
     pub uri: String,
     pub content_hash: String,
@@ -90,15 +91,15 @@ pub struct BackendState {
     pub last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TextEdit {
     pub range: Range,
     pub new_text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FileEdit {
     pub uri: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,8 +119,8 @@ pub struct PlanSummary {
     pub requires_confirmation: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Scope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uris: Option<Vec<String>>,
@@ -135,8 +136,8 @@ pub struct Scope {
     pub max_files: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct WorkspaceStatusInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_backends: Option<bool>,
@@ -160,8 +161,8 @@ pub struct WorkspaceStatusOutput {
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ReadSpanRequest {
     pub uri: String,
     pub range: Range,
@@ -169,7 +170,8 @@ pub struct ReadSpanRequest {
     pub context_lines: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReadSpansInput {
     pub spans: Vec<ReadSpanRequest>,
 }
@@ -183,7 +185,7 @@ pub struct ReadSpansOutput {
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchMode {
     #[default]
@@ -192,8 +194,8 @@ pub enum SearchMode {
     Word,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SearchTextInput {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -220,8 +222,8 @@ pub struct SearchTextOutput {
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PreparePlanInput {
     pub file_edits: Vec<FileEdit>,
 }
@@ -237,8 +239,8 @@ pub struct PreparePlanOutput {
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApplyPlanInput {
     pub plan_id: String,
     pub expected_workspace_revision: String,
@@ -257,8 +259,8 @@ pub struct ApplyPlanOutput {
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DiscardPlanInput {
     pub plan_id: String,
 }
@@ -270,8 +272,8 @@ pub struct DiscardPlanOutput {
     pub plan_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SemanticEnsureInput {
     pub language: String,
     #[serde(skip_serializing_if = "Option::is_none")]

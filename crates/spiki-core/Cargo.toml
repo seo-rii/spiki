@@ -12,6 +12,7 @@ globset.workspace = true
 ignore.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

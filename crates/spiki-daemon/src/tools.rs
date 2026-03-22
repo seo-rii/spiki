@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use schemars::schema_for;
 use serde_json::{json, Value};
 use spiki_core::{
     ApplyPlanInput, DiscardPlanInput, ExecutionError, PreparePlanInput, ReadSpansInput, Runtime,
@@ -129,177 +130,57 @@ pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result
 }
 
 pub(crate) fn tool_specs() -> Vec<Value> {
-    let position_schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "line": { "type": "integer", "minimum": 0 },
-            "character": { "type": "integer", "minimum": 0 }
-        },
-        "required": ["line", "character"]
-    });
-    let range_schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "start": position_schema.clone(),
-            "end": position_schema.clone()
-        },
-        "required": ["start", "end"]
-    });
-    let fingerprint_schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "uri": { "type": "string" },
-            "contentHash": { "type": "string" },
-            "size": { "type": "integer", "minimum": 0 },
-            "mtimeMs": { "type": "integer", "minimum": 0 },
-            "lineEnding": { "type": "string" },
-            "encoding": { "type": "string" }
-        },
-        "required": ["uri", "contentHash", "size", "mtimeMs", "lineEnding", "encoding"]
-    });
-    let scope_schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "uris": {
-                "type": "array",
-                "items": { "type": "string" }
-            },
-            "includeIgnored": { "type": "boolean" },
-            "includeGenerated": { "type": "boolean" },
-            "includeDefaultExcluded": { "type": "boolean" },
-            "excludeGlobs": {
-                "type": "array",
-                "items": { "type": "string" }
-            },
-            "maxFiles": { "type": "integer", "minimum": 1 }
-        }
-    });
+    let workspace_status_schema =
+        serde_json::to_value(schema_for!(WorkspaceStatusInput)).expect("workspace status schema");
+    let read_spans_schema =
+        serde_json::to_value(schema_for!(ReadSpansInput)).expect("read spans schema");
+    let search_text_schema =
+        serde_json::to_value(schema_for!(SearchTextInput)).expect("search text schema");
+    let prepare_plan_schema =
+        serde_json::to_value(schema_for!(PreparePlanInput)).expect("prepare plan schema");
+    let apply_plan_schema =
+        serde_json::to_value(schema_for!(ApplyPlanInput)).expect("apply plan schema");
+    let discard_plan_schema =
+        serde_json::to_value(schema_for!(DiscardPlanInput)).expect("discard plan schema");
+    let semantic_ensure_schema =
+        serde_json::to_value(schema_for!(SemanticEnsureInput)).expect("semantic ensure schema");
 
     vec![
         json!({
             "name": "ae.workspace.status",
             "title": "Workspace Status",
             "description": "Summarize the active view, workspace revision, coverage, and backend state.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "includeBackends": { "type": "boolean", "default": true },
-                    "includeCoverage": { "type": "boolean", "default": true }
-                }
-            }
+            "inputSchema": workspace_status_schema
         }),
         json!({
             "name": "ae.workspace.read_spans",
             "title": "Read Spans",
             "description": "Read precise file spans with optional surrounding context.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "spans": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "uri": { "type": "string" },
-                                "range": range_schema.clone(),
-                                "contextLines": { "type": "integer", "minimum": 0, "default": 2 }
-                            },
-                            "required": ["uri", "range"]
-                        }
-                    }
-                },
-                "required": ["spans"]
-            }
+            "inputSchema": read_spans_schema
         }),
         json!({
             "name": "ae.workspace.search_text",
             "title": "Search Text",
             "description": "Run ignore-aware literal, regex, or whole-word text search.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "query": { "type": "string", "minLength": 1 },
-                    "mode": { "type": "string", "enum": ["literal", "regex", "word"], "default": "literal" },
-                    "caseSensitive": { "type": "boolean", "default": false },
-                    "scope": scope_schema.clone(),
-                    "contextLines": { "type": "integer", "minimum": 0, "default": 1 },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 200 }
-                },
-                "required": ["query"]
-            }
+            "inputSchema": search_text_schema
         }),
         json!({
             "name": "ae.edit.prepare_plan",
             "title": "Prepare Plan",
             "description": "Validate and store a new edit plan for later apply or discard.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "fileEdits": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "uri": { "type": "string" },
-                                "fingerprint": fingerprint_schema.clone(),
-                                "edits": {
-                                    "type": "array",
-                                    "minItems": 1,
-                                    "items": {
-                                        "type": "object",
-                                        "additionalProperties": false,
-                                        "properties": {
-                                            "range": range_schema.clone(),
-                                            "newText": { "type": "string" }
-                                        },
-                                        "required": ["range", "newText"]
-                                    }
-                                }
-                            },
-                            "required": ["uri", "edits"]
-                        }
-                    }
-                },
-                "required": ["fileEdits"]
-            }
+            "inputSchema": prepare_plan_schema
         }),
         json!({
             "name": "ae.edit.apply_plan",
             "title": "Apply Plan",
             "description": "Apply a previously prepared edit plan after CAS validation.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "planId": { "type": "string", "minLength": 1 },
-                    "expectedWorkspaceRevision": { "type": "string", "minLength": 1 }
-                },
-                "required": ["planId", "expectedWorkspaceRevision"]
-            }
+            "inputSchema": apply_plan_schema
         }),
         json!({
             "name": "ae.edit.discard_plan",
             "title": "Discard Plan",
             "description": "Discard a stored edit plan without applying it.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "planId": { "type": "string", "minLength": 1 }
-                },
-                "required": ["planId"]
-            }
+            "inputSchema": discard_plan_schema
         }),
         json!({
             "name": "ae.semantic.status",
@@ -317,15 +198,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
             "name": "ae.semantic.ensure",
             "title": "Semantic Ensure",
             "description": "Warm, stop, or refresh the skeleton semantic backend state cache for a language profile.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "language": { "type": "string" },
-                    "action": { "type": "string", "enum": ["warm", "stop", "refresh"], "default": "warm" }
-                },
-                "required": ["language"]
-            }
+            "inputSchema": semantic_ensure_schema
         }),
     ]
 }
