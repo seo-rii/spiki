@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 
 use spiki_core::model::{FileEdit, Position, Range, SemanticEnsureInput, TextEdit};
-use spiki_core::text::{file_uri_from_path, fingerprint_for_file, read_text_file};
+use spiki_core::text::{
+    file_uri_from_path, fingerprint_for_file, read_text_file, set_scan_log_path_for_test,
+};
 use spiki_core::{
     ApplyPlanInput, DiscardPlanInput, PreparePlanInput, ReadSpansInput, Runtime, SearchTextInput,
     WorkspaceStatusInput,
@@ -51,6 +53,44 @@ fn search_text_respects_gitignore_by_default() {
 
     assert_eq!(output.matches.len(), 1);
     assert!(output.matches[0].uri.ends_with("/app.ts"));
+}
+
+#[test]
+fn search_text_scans_workspace_once_by_default() {
+    let temp = tempdir().unwrap();
+    let scan_log = temp.path().join("scan.log");
+    fs::write(temp.path().join("app.ts"), "const needle = 1;\n").unwrap();
+    set_scan_log_path_for_test(Some(scan_log.clone()));
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("needle"),
+                mode: None,
+                case_sensitive: None,
+                scope: None,
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+    set_scan_log_path_for_test(None);
+
+    assert_eq!(output.matches.len(), 1);
+    assert_eq!(
+        fs::read_to_string(&scan_log)
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "scan")
+            .count(),
+        1
+    );
 }
 
 #[test]

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use globset::{Glob, GlobSetBuilder};
 use parking_lot::Mutex;
 
 use crate::model::{
@@ -12,6 +13,7 @@ use crate::model::{
 use crate::text::{
     build_text_span, canonical_roots_from_uris, ensure_path_in_roots, file_uri_from_path,
     path_from_file_uri, read_text_file, scan_workspace, search_file, KnownFile, ScanOptions,
+    ScanResult,
 };
 
 use super::error::SpikiResult;
@@ -135,21 +137,93 @@ impl Runtime {
         let mut warnings = Vec::new();
         let mut matches = Vec::new();
         let scope = input.scope.clone();
-        let scan = scan_workspace(
-            &view.roots_canonical,
-            scope.as_ref(),
-            ScanOptions {
-                include_ignored: scope
-                    .as_ref()
-                    .and_then(|value| value.include_ignored)
-                    .unwrap_or(false),
-                include_generated: scope
-                    .as_ref()
-                    .and_then(|value| value.include_generated)
-                    .unwrap_or(false),
-                max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
-            },
-        )?;
+        let scan = if scope
+            .as_ref()
+            .map(|value| {
+                !value.include_ignored.unwrap_or(false) && !value.include_generated.unwrap_or(false)
+            })
+            .unwrap_or(true)
+        {
+            let mut scope_targets = Vec::new();
+            if let Some(uris) = scope.as_ref().and_then(|value| value.uris.as_ref()) {
+                for uri in uris {
+                    let path = path_from_file_uri(uri)?;
+                    scope_targets.push(ensure_path_in_roots(&path, &view.roots_canonical)?);
+                }
+            }
+            scope_targets.sort();
+            scope_targets.dedup();
+
+            let exclude_globs = if let Some(patterns) = scope
+                .as_ref()
+                .and_then(|value| value.exclude_globs.as_ref())
+            {
+                let mut builder = GlobSetBuilder::new();
+                for pattern in patterns {
+                    builder.add(Glob::new(pattern).map_err(|error| {
+                        super::error::spiki_error(
+                            super::error::SpikiCode::InvalidRequest,
+                            format!("Invalid exclude glob {pattern}: {error}"),
+                        )
+                    })?);
+                }
+                Some(builder.build().map_err(|error| {
+                    super::error::spiki_error(
+                        super::error::SpikiCode::InvalidRequest,
+                        format!("Failed to build exclude globs: {error}"),
+                    )
+                })?)
+            } else {
+                None
+            };
+
+            let meta = view.workspace.meta.lock();
+            let mut files = meta.known_files.keys().cloned().collect::<Vec<_>>();
+            if !scope_targets.is_empty() {
+                files.retain(|path| scope_targets.iter().any(|target| path.starts_with(target)));
+            }
+            if let Some(exclude_globs) = &exclude_globs {
+                files.retain(|path| !exclude_globs.is_match(path));
+            }
+            files.sort();
+            let mut known_files = meta
+                .known_files
+                .iter()
+                .filter(|(path, _)| {
+                    scope_targets.is_empty()
+                        || scope_targets.iter().any(|target| path.starts_with(target))
+                })
+                .filter(|(path, _)| {
+                    exclude_globs
+                        .as_ref()
+                        .map(|value| !value.is_match(path))
+                        .unwrap_or(true)
+                })
+                .map(|(path, known_file)| (path.clone(), known_file.clone()))
+                .collect::<Vec<_>>();
+            known_files.sort_by(|left, right| left.0.cmp(&right.0));
+            ScanResult {
+                files,
+                known_files,
+                warnings: Vec::new(),
+            }
+        } else {
+            scan_workspace(
+                &view.roots_canonical,
+                scope.as_ref(),
+                ScanOptions {
+                    include_ignored: scope
+                        .as_ref()
+                        .and_then(|value| value.include_ignored)
+                        .unwrap_or(false),
+                    include_generated: scope
+                        .as_ref()
+                        .and_then(|value| value.include_generated)
+                        .unwrap_or(false),
+                    max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
+                },
+            )?
+        };
         warnings.extend(scan.warnings);
         let limit = input.limit.unwrap_or(200);
         let context_lines = input.context_lines.unwrap_or(1);

@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -13,11 +15,34 @@ use crate::runtime::{spiki_error, SpikiCode, SpikiResult};
 use super::paths::{ensure_path_in_roots, path_from_file_uri};
 use super::types::{CanonicalRoot, KnownFile, ScanOptions, ScanResult};
 
+thread_local! {
+    static SCAN_LOG_PATH_FOR_TEST: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[doc(hidden)]
+pub fn set_scan_log_path_for_test(path: Option<PathBuf>) {
+    SCAN_LOG_PATH_FOR_TEST.with(|slot| {
+        *slot.borrow_mut() = path;
+    });
+}
+
 pub fn scan_workspace(
     roots: &[CanonicalRoot],
     scope: Option<&Scope>,
     options: ScanOptions,
 ) -> SpikiResult<ScanResult> {
+    SCAN_LOG_PATH_FOR_TEST.with(|slot| {
+        if let Some(scan_log_path) = slot.borrow().clone() {
+            if let Ok(mut file) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(scan_log_path)
+            {
+                let _ = writeln!(file, "scan");
+            }
+        }
+    });
+
     let mut files = Vec::new();
     let mut known_files = Vec::new();
     let mut warnings = Vec::new();
