@@ -232,6 +232,115 @@ fn apply_plan_updates_files_and_discard_marks_plan() {
 }
 
 #[test]
+fn apply_plan_preserves_original_file_encoding_and_bom() {
+    let temp = tempdir().unwrap();
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+    let original_text = "const oldName = 1;\nconsole.log(oldName);\n";
+    let updated_text = "const newName = 1;\nconsole.log(newName);\n";
+
+    for (file_name, bytes, expected_encoding, expected_bom) in [
+        (
+            "bom.ts",
+            {
+                let mut value = vec![0xEF, 0xBB, 0xBF];
+                value.extend_from_slice(original_text.as_bytes());
+                value
+            },
+            "utf-8-bom",
+            vec![0xEF, 0xBB, 0xBF],
+        ),
+        (
+            "utf16le.ts",
+            {
+                let mut value = vec![0xFF, 0xFE];
+                for unit in original_text.encode_utf16() {
+                    value.extend_from_slice(&unit.to_le_bytes());
+                }
+                value
+            },
+            "utf-16le",
+            vec![0xFF, 0xFE],
+        ),
+        (
+            "utf16be.ts",
+            {
+                let mut value = vec![0xFE, 0xFF];
+                for unit in original_text.encode_utf16() {
+                    value.extend_from_slice(&unit.to_be_bytes());
+                }
+                value
+            },
+            "utf-16be",
+            vec![0xFE, 0xFF],
+        ),
+    ] {
+        let file_path = temp.path().join(file_name);
+        fs::write(&file_path, bytes).unwrap();
+
+        let loaded = read_text_file(&file_path).unwrap();
+        let fingerprint = fingerprint_for_file(&file_path, &loaded);
+        let (plan_id, revision) = runtime
+            .seed_plan_for_test(
+                &view,
+                vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: Some(fingerprint),
+                    edits: vec![
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 6,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 13,
+                                },
+                            },
+                            new_text: String::from("newName"),
+                        },
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 1,
+                                    character: 12,
+                                },
+                                end: Position {
+                                    line: 1,
+                                    character: 19,
+                                },
+                            },
+                            new_text: String::from("newName"),
+                        },
+                    ],
+                }],
+            )
+            .unwrap();
+
+        let apply = runtime
+            .apply_plan(
+                &view,
+                ApplyPlanInput {
+                    plan_id,
+                    expected_workspace_revision: revision,
+                },
+            )
+            .unwrap();
+        assert!(apply.applied);
+
+        let reloaded = read_text_file(&file_path).unwrap();
+        assert_eq!(reloaded.encoding, expected_encoding);
+        assert_eq!(reloaded.text, updated_text);
+
+        let rewritten_bytes = fs::read(&file_path).unwrap();
+        assert!(rewritten_bytes.starts_with(&expected_bom));
+    }
+}
+
+#[test]
 fn semantic_status_detects_built_in_web_framework_profiles() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join("src/app")).unwrap();

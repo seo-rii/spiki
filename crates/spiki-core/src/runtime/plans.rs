@@ -68,6 +68,12 @@ impl Runtime {
         for file_edit in &plan.file_edits {
             let path = path_from_file_uri(&file_edit.uri)?;
             let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
+            let original_bytes = fs::read(&canonical).map_err(|error| {
+                spiki_error(
+                    SpikiCode::Internal,
+                    format!("Failed to read {}: {error}", canonical.display()),
+                )
+            })?;
             let loaded = read_text_file(&canonical)?;
             if let Some(expected) = &file_edit.fingerprint {
                 let actual = fingerprint_for_file(&canonical, &loaded);
@@ -81,15 +87,52 @@ impl Runtime {
             }
             let rewritten =
                 apply_edits_to_text(&loaded.text, &file_edit.edits, &loaded.line_ending)?;
-            original_files.push((canonical.clone(), loaded.text));
-            rewritten_files.push((canonical, rewritten));
+            let rewritten_bytes = if loaded.encoding == "utf-8" {
+                rewritten.into_bytes()
+            } else if loaded.encoding == "utf-8-bom" {
+                let mut bytes = vec![0xEF, 0xBB, 0xBF];
+                bytes.extend_from_slice(rewritten.as_bytes());
+                bytes
+            } else if loaded.encoding == "utf-16le" {
+                let mut bytes = vec![0xFF, 0xFE];
+                for unit in rewritten.encode_utf16() {
+                    bytes.extend_from_slice(&unit.to_le_bytes());
+                }
+                bytes
+            } else if loaded.encoding == "utf-16be" {
+                let mut bytes = vec![0xFE, 0xFF];
+                for unit in rewritten.encode_utf16() {
+                    bytes.extend_from_slice(&unit.to_be_bytes());
+                }
+                bytes
+            } else {
+                return Err(spiki_error(
+                    SpikiCode::Unsupported,
+                    format!(
+                        "Unsupported text encoding {} for {}",
+                        loaded.encoding,
+                        canonical.display()
+                    ),
+                ));
+            };
+            original_files.push((canonical.clone(), original_bytes));
+            rewritten_files.push((canonical, rewritten_bytes));
             files_touched += 1;
             edits_applied += file_edit.edits.len() as u64;
         }
 
         let mut written = Vec::new();
         for (path, content) in &rewritten_files {
-            if let Err(error) = fs::write(path, content) {
+            let temp_path = path.with_file_name(format!(
+                ".{}.spiki-tmp-{}",
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("spiki"),
+                Uuid::now_v7().simple()
+            ));
+            if let Err(error) = fs::write(&temp_path, content).and_then(|_| fs::rename(&temp_path, path))
+            {
+                let _ = fs::remove_file(&temp_path);
                 for (rollback_path, rollback_content) in written {
                     let _ = fs::write(rollback_path, rollback_content);
                 }
