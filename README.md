@@ -1,45 +1,68 @@
 # spiki
 
-`spiki`는 에이전트가 텍스트 패치 대신 구조적 편집 흐름으로 코드베이스를 다루게 하기 위한 editor MCP 참조 구현이다.
+`spiki` is an editor-oriented MCP reference implementation for agents that need stable workspace operations instead of ad hoc text patching.
 
-현재 구현 범위는 `SPEC.md`의 Phase 1 기준이다.
+The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): workspace inspection, precise text reads, ignore-aware search, compare-and-swap edit application, and a lightweight semantic backend registry.
 
-- Node launcher가 per-user daemon을 탐색/기동하고 stdio bridge를 제공
-- Rust daemon이 shared workspace/runtime을 유지
-- semantic status는 detected leaf profile과 skeleton lifecycle state를 노출
-- public MCP tools:
-  - `ae.workspace.status`
-  - `ae.workspace.read_spans`
-  - `ae.workspace.search_text`
-  - `ae.edit.apply_plan`
-  - `ae.edit.discard_plan`
-  - `ae.semantic.status`
-  - `ae.semantic.ensure`
+## Highlights
 
-## 개발
+- Node.js launcher with MCP stdio bridging and on-demand daemon startup
+- Rust daemon with shared workspace/runtime state across requests
+- Ignore-aware workspace scanning, exact span reads, and text search
+- CAS-style edit plan apply/discard flow
+- Built-in language profile detection for common web and general-purpose stacks
+- Phase 1 semantic lifecycle cache with `warm`, `refresh`, and `stop`
 
-Rust daemon 빌드:
+## Public MCP Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `ae.workspace.status` | Return roots, workspace revision, coverage, and backend summary for the active view. |
+| `ae.workspace.read_spans` | Read exact ranges from files with optional surrounding context and fingerprints. |
+| `ae.workspace.search_text` | Run literal, regex, or whole-word text search across the workspace. |
+| `ae.edit.apply_plan` | Apply a previously prepared edit plan after compare-and-swap validation. |
+| `ae.edit.discard_plan` | Discard a prepared edit plan without mutating files. |
+| `ae.semantic.status` | Report detected leaf semantic profiles and their cached lifecycle state. |
+| `ae.semantic.ensure` | Warm, refresh, or stop the cached semantic state for a language profile. |
+
+## Quick Start
+
+### Prerequisites
+
+- A recent Node.js runtime
+- A Rust toolchain with `cargo`
+
+### Build the daemon
 
 ```bash
 node ./scripts/build-daemon.mjs
 ```
 
-smoke test:
+### Run diagnostics
 
 ```bash
-npm run test:smoke
+node ./bin/spiki.js doctor
 ```
 
-Codex integration test:
+### Start the MCP bridge
 
 ```bash
-npm run test:codex
+node ./bin/spiki.js
 ```
 
-`test:codex`는 시스템의 `codex` CLI가 있으면 그 바이너리를 사용하고, 없으면 `npx @openai/codex`로 fallback 한다.
+The launcher is the public entrypoint. It will start or reuse the per-user daemon automatically.
 
-전체 integration test:
+## Documentation
 
-```bash
-npm run test:integration
-```
+- [Documentation index](./docs/README.md)
+- [Architecture](./docs/architecture.md)
+- [Development guide](./docs/development.md)
+- [Language profiles](./docs/language-profiles.md)
+- [Full specification](./SPEC.md)
+
+## Current Scope
+
+- `spiki` is still a reference build, not a complete production editor runtime.
+- Phase 1 focuses on reliable text and workspace operations.
+- Semantic lifecycle support is currently a cached skeleton state, not a full semantic engine.
+- The specification is intentionally ahead of the current implementation in some areas.
