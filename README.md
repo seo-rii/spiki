@@ -57,6 +57,11 @@ If you need to support a roots-less client, opt in explicitly with `SPIKI_ALLOW_
 Default exclude components such as `dist`, `target`, or `coverage` are configurable defaults, not forced hides.
 Use `scope.includeDefaultExcluded=true` for one search, or set `SPIKI_DEFAULT_EXCLUDE_COMPONENTS` / `SPIKI_FORCED_EXCLUDE_COMPONENTS` on the daemon process for global policy changes.
 
+### Intended npm surface
+
+The launcher package is prepared to publish as `@seo-rii/spiki`.
+Until an npm release is actually published, use the repository checkout or `npm pack` output from this repository.
+
 ## Documentation
 
 - [Documentation index](./docs/README.md)

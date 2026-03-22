@@ -3,7 +3,7 @@
 작성일: 2026-03-22  
 기준 커밋: `7f7459f` (`docs: reorganize project documentation`)  
 범위: `spiki` 레포지토리 (`README`, `docs`, `launcher`, `crates/spiki-core`, `crates/spiki-daemon`, `tests`)  
-우선순위: 배포/플랫폼 정합성, launcher 구조 정리, schema 자동화 우선  
+우선순위: 플랫폼 정합성, launcher 구조 정리, schema 자동화 우선  
 산출물 형식: finding + backlog + test_backlog 스키마 기반 리스크 레지스터
 
 ## 0) 스키마
@@ -32,15 +32,15 @@ open 항목은 아래 필드를 사용한다.
 - 현재 public Phase 1 도구 8개(`ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.prepare_plan`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure`)는 코드와 테스트 흐름에서 대체로 일치한다.
 - `apply_plan`은 `workspace_revision`, view ownership, file fingerprint를 다시 검증하고 있어서 최소한의 CAS 성격은 이미 확보했다.
 - 직전 외부 정적 리뷰에서 지적된 README `docs/` 링크 깨짐은 로컬 `main` 기준으로 해소됐다. 지금은 `README.md`와 `docs/` 구조가 실제 저장소와 맞는다.
-- 현재 open risk의 중심은 문서 품질이 아니라 제품화/구조 정합성 쪽이다. launcher bootstrap race, write path의 인코딩 보존, 외부 edit flow의 미완결성, 기본 search 경로의 이중 스캔, overlapping edit/schema validation, roots fallback 정책, hardcoded scan policy 문제는 로컬 `main` 기준으로 해소됐다.
-- 그 다음 순위는 publishable launcher packaging, platform bootstrap parity, launcher/runtime 책임 집중, hand-written schema drift 문제다.
+- 현재 open risk의 중심은 문서 품질이 아니라 플랫폼/구조 정합성 쪽이다. launcher bootstrap race, write path의 인코딩 보존, 외부 edit flow의 미완결성, 기본 search 경로의 이중 스캔, overlapping edit/schema validation, roots fallback 정책, hardcoded scan policy, launcher package metadata 문제는 로컬 `main` 기준으로 해소됐다.
+- 그 다음 순위는 platform bootstrap parity, launcher/runtime 책임 집중, hand-written schema drift 문제다.
 
 ## 2) 2026-03-22 외부 정적 리뷰 재평가
 
 | 외부 리뷰 항목 | 현재 상태 | 현재 근거 |
 |---|---|---|
 | README가 `docs/`를 가리키지만 실제 디렉터리가 없음 | resolved locally | 현재 로컬 `main`에는 `docs/README.md`, `docs/architecture.md`, `docs/development.md`, `docs/language-profiles.md`가 존재한다. |
-| npm 배포 모델이 스펙과 다름 | valid / backlog | `package.json`은 여전히 `private: true`이고 publish-ready launcher package 상태는 아니다. |
+| npm 배포 모델이 스펙과 다름 | resolved locally | `package.json`은 publishable metadata와 `files` whitelist를 갖춘 launcher package 형태로 정리됐고 `npm pack --dry-run` 검증이 추가됐다. |
 | Windows / non-Unix runtime model이 스펙과 다름 | valid / backlog | 스펙은 Windows named pipe + single-instance mutex를 상정하지만 현재 구현은 non-Unix를 제품 수준으로 다루지 않는다. |
 | launcher startup race 가능성 | resolved locally | `ensureDaemonRunning()`은 bootstrap lock을 잡고 socket recheck 후 spawn으로 진행하며, concurrent bootstrap regression test가 추가됐다. |
 | 파일 인코딩 보존 없이 write | resolved locally | `apply_plan()`은 원본 encoding/BOM을 보존해 temp file + rename 경로로 기록하고, BOM/UTF-16 roundtrip test가 추가됐다. |
@@ -64,6 +64,7 @@ open 항목은 아래 필드를 사용한다.
 | `R-008` overlapping edit / loose input schema | resolved locally | overlapping edit는 조기 거부되고 `read_spans`, `search_text`, `prepare_plan` schema가 더 구체화됐다. |
 | `R-009` roots-less client implicit `cwd` fallback | resolved locally | 기본은 reject로 바뀌었고, roots 없는 client 지원은 `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`에서만 허용되며 reject/opt-in 테스트가 추가됐다. |
 | `R-010` hardcoded scan policy | resolved locally | default exclude는 `RuntimeConfig`와 daemon env로 설정 가능하고, MCP search는 `scope.includeDefaultExcluded`로 per-request override를 제공한다. |
+| `R-011` publishable launcher package gap | resolved locally | `package.json`에서 `private`를 제거하고 publish metadata / files whitelist / license를 추가했으며 `npm pack --dry-run` test가 들어갔다. |
 
 ## 4) 현재 Open Finding
 
@@ -73,7 +74,6 @@ open 항목은 아래 필드를 사용한다.
 
 | backlog | area | evidence | fix_option | priority |
 |---|---|---|---|---|
-| `B-001` publishable launcher package gap | productization | 스펙은 npm launcher UX를 상정하지만, 현재 `package.json`은 `private: true`이고 publish-ready metadata/packaging 단계가 아니다. | npm package surface, install docs, release workflow를 별도 제품화 라운드로 정리한다. | medium |
 | `B-002` Windows / bootstrap model gap | platform | 스펙은 Windows named pipe + single-instance mutex와 Linux/macOS lock 절차를 상정하지만 구현은 그 수준까지 도달하지 못했다. | platform abstraction과 bootstrap lock 절차를 명시적으로 구현한다. | medium |
 | `B-004` launcher module hotspot | maintainability | `launcher/runtime.mjs`에 경로 계산, daemon lifecycle, stdio bridge가 함께 들어 있다. | `runtime-paths`, `daemon-bootstrap`, `mcp-bridge`로 나눠 race fix와 테스트를 쉽게 만든다. | low |
 | `B-005` runtime ownership hotspot | maintainability | 현재 `Runtime`는 workspace scan, plan state, semantic skeleton, apply 흐름을 함께 들고 있다. | `WorkspaceIndex`, `PlanStore`, `SemanticSupervisor` 정도로 역할을 쪼갠다. | low |
@@ -84,6 +84,7 @@ open 항목은 아래 필드를 사용한다.
 - `cargo test --workspace` : pass
 - `node ./scripts/build-daemon.mjs` : pass
 - `node --test ./tests/program-exec.test.mjs ./tests/bootstrap-race.test.mjs` : pass
+- `node --test ./tests/package-metadata.test.mjs` : pass
 - `npm run test:integration` : 환경 의존(Codex CLI quota/availability)으로 변동 가능
 
 ## 7) 남은 테스트 Backlog
@@ -91,8 +92,8 @@ open 항목은 아래 필드를 사용한다.
 현재 별도 test backlog는 없다.
 ## 8) 권장 후속 순서
 
-1. `B-001` / `B-002` publishable launcher + platform parity는 제품화 라운드에서 함께 다룬다.  
-   npm package surface와 Windows bootstrap model은 reference 구현 다음 단계의 핵심 공백이다.
+1. `B-002` Windows / platform parity는 별도 라운드가 필요하다.  
+   package metadata는 정리됐지만 named pipe + single-instance bootstrap은 아직 Unix 기준 구현에 머물러 있다.
 
 2. `B-006` schema automation과 `B-004` launcher 구조 정리는 구조 정리 라운드로 넘긴다.  
    현재는 correctness는 좋아졌지만 long-term drift와 hotspot 문제는 남아 있다.

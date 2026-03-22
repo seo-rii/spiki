@@ -1,8 +1,44 @@
 {
-  "name": "spiki",
+  "name": "@seo-rii/spiki",
   "version": "0.1.0-dev",
-  "private": true,
+  "description": "Editor-oriented MCP reference implementation for stable agent workspace operations",
+  "license": "MIT",
+  "author": "seo-rii",
   "type": "module",
+  "homepage": "https://github.com/seo-rii/spiki#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seo-rii/spiki.git"
+  },
+  "bugs": {
+    "url": "https://github.com/seo-rii/spiki/issues"
+  },
+  "keywords": [
+    "agent",
+    "editor",
+    "mcp",
+    "model-context-protocol",
+    "node",
+    "rust"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin/",
+    "launcher/",
+    "scripts/",
+    "crates/",
+    "docs/",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
   "bin": {
     "spiki": "./bin/spiki.js"
   },
