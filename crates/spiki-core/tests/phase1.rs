@@ -344,6 +344,60 @@ fn prepare_plan_creates_public_edit_flow() {
 }
 
 #[test]
+fn prepare_plan_rejects_overlapping_edits() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let error = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: None,
+                    edits: vec![
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 6,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 13,
+                                },
+                            },
+                            new_text: String::from("first"),
+                        },
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 10,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 13,
+                                },
+                            },
+                            new_text: String::from("second"),
+                        },
+                    ],
+                }],
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "AE_INVALID_REQUEST");
+}
+
+#[test]
 fn apply_plan_preserves_original_file_encoding_and_bom() {
     let temp = tempdir().unwrap();
     let runtime = Runtime::new(Default::default());

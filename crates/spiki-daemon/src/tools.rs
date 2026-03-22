@@ -129,6 +129,55 @@ pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result
 }
 
 pub(crate) fn tool_specs() -> Vec<Value> {
+    let position_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "line": { "type": "integer", "minimum": 0 },
+            "character": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["line", "character"]
+    });
+    let range_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "start": position_schema.clone(),
+            "end": position_schema.clone()
+        },
+        "required": ["start", "end"]
+    });
+    let fingerprint_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "uri": { "type": "string" },
+            "contentHash": { "type": "string" },
+            "size": { "type": "integer", "minimum": 0 },
+            "mtimeMs": { "type": "integer", "minimum": 0 },
+            "lineEnding": { "type": "string" },
+            "encoding": { "type": "string" }
+        },
+        "required": ["uri", "contentHash", "size", "mtimeMs", "lineEnding", "encoding"]
+    });
+    let scope_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "uris": {
+                "type": "array",
+                "items": { "type": "string" }
+            },
+            "includeIgnored": { "type": "boolean" },
+            "includeGenerated": { "type": "boolean" },
+            "excludeGlobs": {
+                "type": "array",
+                "items": { "type": "string" }
+            },
+            "maxFiles": { "type": "integer", "minimum": 1 }
+        }
+    });
+
     vec![
         json!({
             "name": "ae.workspace.status",
@@ -158,7 +207,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
                             "additionalProperties": false,
                             "properties": {
                                 "uri": { "type": "string" },
-                                "range": { "type": "object" },
+                                "range": range_schema.clone(),
                                 "contextLines": { "type": "integer", "minimum": 0, "default": 2 }
                             },
                             "required": ["uri", "range"]
@@ -179,7 +228,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
                     "query": { "type": "string", "minLength": 1 },
                     "mode": { "type": "string", "enum": ["literal", "regex", "word"], "default": "literal" },
                     "caseSensitive": { "type": "boolean", "default": false },
-                    "scope": { "type": "object" },
+                    "scope": scope_schema.clone(),
                     "contextLines": { "type": "integer", "minimum": 0, "default": 1 },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 200 }
                 },
@@ -202,7 +251,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
                             "additionalProperties": false,
                             "properties": {
                                 "uri": { "type": "string" },
-                                "fingerprint": { "type": "object" },
+                                "fingerprint": fingerprint_schema.clone(),
                                 "edits": {
                                     "type": "array",
                                     "minItems": 1,
@@ -210,7 +259,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
                                         "type": "object",
                                         "additionalProperties": false,
                                         "properties": {
-                                            "range": { "type": "object" },
+                                            "range": range_schema.clone(),
                                             "newText": { "type": "string" }
                                         },
                                         "required": ["range", "newText"]
