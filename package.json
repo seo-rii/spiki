@@ -1,0 +1,15 @@
+{
+  "name": "spiki",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "spiki": "./bin/spiki.js"
+  },
+  "scripts": {
+    "build:daemon": "node ./scripts/build-daemon.mjs",
+    "test:smoke": "node --test ./tests/program-exec.test.mjs",
+    "test:codex": "node --test ./tests/codex-integration.test.mjs",
+    "test:integration": "node --test ./tests/*.test.mjs"
+  }
+}
