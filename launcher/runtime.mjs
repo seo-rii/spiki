@@ -72,6 +72,16 @@ function connectSocket(socketPath, timeoutMs = 250) {
   });
 }
 
+async function isDaemonReachable(socketPath, timeoutMs = 250) {
+  try {
+    const socket = await connectSocket(socketPath, timeoutMs);
+    socket.destroy();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -123,13 +133,10 @@ async function cleanupStaleRuntime(runtimeDir, socketPath) {
 async function waitForDaemon(socketPath, timeoutMs = 5000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const socket = await connectSocket(socketPath, 250);
-      socket.destroy();
+    if (await isDaemonReachable(socketPath, 250)) {
       return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   throw new Error("Timed out waiting for spiki daemon readiness");
@@ -143,33 +150,83 @@ export async function ensureDaemonRunning() {
 
   await ensureRuntimeDir(runtimeDir);
 
-  try {
-    const socket = await connectSocket(socketPath, 250);
-    socket.destroy();
+  if (await isDaemonReachable(socketPath, 250)) {
     return { projectRoot, runtimeDir, socketPath, daemonBin };
-  } catch {
-    await cleanupStaleRuntime(runtimeDir, socketPath);
+  }
+
+  const lockPath = path.join(runtimeDir, "bootstrap.lock");
+  const lockDeadline = Date.now() + 10000;
+  while (true) {
+    try {
+      await fs.mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (!error || error.code !== "EEXIST") {
+        throw error;
+      }
+
+      try {
+        const lockStat = await fs.stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > 30000) {
+          await fs.rm(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      } catch (statError) {
+        if (statError && statError.code === "ENOENT") {
+          continue;
+        }
+
+        throw statError;
+      }
+
+      if (Date.now() >= lockDeadline) {
+        throw new Error("Timed out waiting for spiki bootstrap lock");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   try {
-    await fs.access(daemonBin);
-  } catch {
-    await buildDaemonBinary(projectRoot);
-  }
+    await fs.writeFile(
+      path.join(lockPath, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: new Date().toISOString()
+      })
+    );
 
-  const child = spawn(daemonBin, ["--socket", socketPath, "--runtime-dir", runtimeDir], {
-    cwd: projectRoot,
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      RUST_LOG: process.env.RUST_LOG ?? "info"
+    if (await isDaemonReachable(socketPath, 250)) {
+      return { projectRoot, runtimeDir, socketPath, daemonBin };
     }
-  });
 
-  child.unref();
-  await waitForDaemon(socketPath);
-  return { projectRoot, runtimeDir, socketPath, daemonBin };
+    await cleanupStaleRuntime(runtimeDir, socketPath);
+    if (await isDaemonReachable(socketPath, 250)) {
+      return { projectRoot, runtimeDir, socketPath, daemonBin };
+    }
+
+    try {
+      await fs.access(daemonBin);
+    } catch {
+      await buildDaemonBinary(projectRoot);
+    }
+
+    const child = spawn(daemonBin, ["--socket", socketPath, "--runtime-dir", runtimeDir], {
+      cwd: projectRoot,
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        RUST_LOG: process.env.RUST_LOG ?? "info"
+      }
+    });
+
+    child.unref();
+    await waitForDaemon(socketPath);
+    return { projectRoot, runtimeDir, socketPath, daemonBin };
+  } finally {
+    await fs.rm(lockPath, { recursive: true, force: true });
+  }
 }
 
 export async function bridgeStdio() {
@@ -354,15 +411,7 @@ export async function daemonStatus() {
   const socketPath = getSocketPath(runtimeDir);
   const daemonBin = resolveDaemonBinary(getProjectRoot());
   const pid = await readPid(runtimeDir);
-  let reachable = false;
-
-  try {
-    const socket = await connectSocket(socketPath, 250);
-    reachable = true;
-    socket.destroy();
-  } catch {
-    reachable = false;
-  }
+  const reachable = await isDaemonReachable(socketPath, 250);
 
   return {
     runtimeDir,
