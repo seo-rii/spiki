@@ -4,7 +4,7 @@ use std::fs;
 use spiki_core::model::{FileEdit, Position, Range, SemanticEnsureInput, TextEdit};
 use spiki_core::text::{file_uri_from_path, fingerprint_for_file, read_text_file};
 use spiki_core::{
-    ApplyPlanInput, DiscardPlanInput, ReadSpansInput, Runtime, SearchTextInput,
+    ApplyPlanInput, DiscardPlanInput, PreparePlanInput, ReadSpansInput, Runtime, SearchTextInput,
     WorkspaceStatusInput,
 };
 use tempfile::tempdir;
@@ -229,6 +229,78 @@ fn apply_plan_updates_files_and_discard_marks_plan() {
         .unwrap();
     assert!(discarded.discarded);
     assert_eq!(discarded.plan_id, discard_plan_id);
+}
+
+#[test]
+fn prepare_plan_creates_public_edit_flow() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\nconsole.log(oldName);\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let prepared = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: None,
+                    edits: vec![
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 6,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 13,
+                                },
+                            },
+                            new_text: String::from("newName"),
+                        },
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 1,
+                                    character: 12,
+                                },
+                                end: Position {
+                                    line: 1,
+                                    character: 19,
+                                },
+                            },
+                            new_text: String::from("newName"),
+                        },
+                    ],
+                }],
+            },
+        )
+        .unwrap();
+
+    assert!(prepared.plan_id.starts_with("plan_"));
+    assert_eq!(prepared.workspace_revision, "rev_1");
+    assert_eq!(prepared.summary.files_touched, 1);
+    assert_eq!(prepared.summary.edits, 2);
+
+    let apply = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id: prepared.plan_id,
+                expected_workspace_revision: prepared.workspace_revision,
+            },
+        )
+        .unwrap();
+    assert!(apply.applied);
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "const newName = 1;\nconsole.log(newName);\n"
+    );
 }
 
 #[test]

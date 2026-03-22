@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use spiki_core::{
-    ApplyPlanInput, DiscardPlanInput, ExecutionError, ReadSpansInput, Runtime, SearchTextInput,
-    SemanticEnsureInput, WorkspaceStatusInput,
+    ApplyPlanInput, DiscardPlanInput, ExecutionError, PreparePlanInput, ReadSpansInput, Runtime,
+    SearchTextInput, SemanticEnsureInput, WorkspaceStatusInput,
 };
 
 use crate::session::Session;
@@ -52,6 +52,19 @@ pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result
             Ok(input) => match session.runtime.search_text(&view, input) {
                 Ok(output) => tool_success(
                     format!("found {} text matches", output.matches.len()),
+                    serde_json::to_value(output)?,
+                ),
+                Err(error) => tool_failure(Runtime::execution_error(error)),
+            },
+            Err(error) => tool_failure(invalid_arguments(error)),
+        },
+        "ae.edit.prepare_plan" => match serde_json::from_value::<PreparePlanInput>(arguments) {
+            Ok(input) => match session.runtime.prepare_plan(&view, input) {
+                Ok(output) => tool_success(
+                    format!(
+                        "prepared plan {} with {} edits",
+                        output.plan_id, output.summary.edits
+                    ),
                     serde_json::to_value(output)?,
                 ),
                 Err(error) => tool_failure(Runtime::execution_error(error)),
@@ -171,6 +184,44 @@ pub(crate) fn tool_specs() -> Vec<Value> {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 200 }
                 },
                 "required": ["query"]
+            }
+        }),
+        json!({
+            "name": "ae.edit.prepare_plan",
+            "title": "Prepare Plan",
+            "description": "Validate and store a new edit plan for later apply or discard.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "fileEdits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "uri": { "type": "string" },
+                                "fingerprint": { "type": "object" },
+                                "edits": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                            "range": { "type": "object" },
+                                            "newText": { "type": "string" }
+                                        },
+                                        "required": ["range", "newText"]
+                                    }
+                                }
+                            },
+                            "required": ["uri", "edits"]
+                        }
+                    }
+                },
+                "required": ["fileEdits"]
             }
         }),
         json!({

@@ -9,7 +9,7 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 - Node.js launcher with MCP stdio bridging and on-demand daemon startup
 - Rust daemon with shared workspace/runtime state across requests
 - Ignore-aware workspace scanning, exact span reads, and text search
-- CAS-style edit plan apply/discard flow
+- CAS-style edit plan prepare/apply/discard flow
 - Built-in language profile detection for common web and general-purpose stacks
 - Phase 1 semantic lifecycle cache with `warm`, `refresh`, and `stop`
 
@@ -20,6 +20,7 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 | `ae.workspace.status` | Return roots, workspace revision, coverage, and backend summary for the active view. |
 | `ae.workspace.read_spans` | Read exact ranges from files with optional surrounding context and fingerprints. |
 | `ae.workspace.search_text` | Run literal, regex, or whole-word text search across the workspace. |
+| `ae.edit.prepare_plan` | Validate and store a new edit plan for later apply or discard. |
 | `ae.edit.apply_plan` | Apply a previously prepared edit plan after compare-and-swap validation. |
 | `ae.edit.discard_plan` | Discard a prepared edit plan without mutating files. |
 | `ae.semantic.status` | Report detected leaf semantic profiles and their cached lifecycle state. |

@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::model::{
     ApplyPlanInput, ApplyPlanOutput, DiscardPlanInput, DiscardPlanOutput, FileEdit, PlanSummary,
+    PreparePlanInput, PreparePlanOutput,
 };
 use crate::text::{
     apply_edits_to_text, ensure_path_in_roots, fingerprint_for_file, path_from_file_uri,
@@ -15,6 +16,64 @@ use super::error::{spiki_error, SpikiCode, SpikiResult};
 use super::state::{PlanState, Runtime, StoredPlan, ViewContext};
 
 impl Runtime {
+    pub fn prepare_plan(
+        &self,
+        view: &ViewContext,
+        input: PreparePlanInput,
+    ) -> SpikiResult<PreparePlanOutput> {
+        self.refresh_workspace(view, None)?;
+        if input.file_edits.is_empty() {
+            return Err(spiki_error(
+                SpikiCode::InvalidRequest,
+                String::from("prepare_plan requires at least one file edit"),
+            ));
+        }
+
+        let mut prepared_file_edits = Vec::new();
+        let mut edits = 0u64;
+
+        for file_edit in input.file_edits {
+            let path = path_from_file_uri(&file_edit.uri)?;
+            let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
+            let loaded = read_text_file(&canonical)?;
+            let actual = fingerprint_for_file(&canonical, &loaded);
+            if let Some(expected) = &file_edit.fingerprint {
+                if &actual != expected {
+                    return Err(spiki_error(
+                        SpikiCode::StalePlan,
+                        format!("Fingerprint mismatch for {}", file_edit.uri),
+                    ));
+                }
+            }
+
+            let _ = apply_edits_to_text(&loaded.text, &file_edit.edits, &loaded.line_ending)?;
+            edits += file_edit.edits.len() as u64;
+            prepared_file_edits.push(FileEdit {
+                uri: file_edit.uri,
+                fingerprint: Some(actual),
+                edits: file_edit.edits,
+            });
+        }
+
+        let summary = PlanSummary {
+            files_touched: prepared_file_edits.len() as u64,
+            edits,
+            languages: None,
+            blocked: Some(0),
+            requires_confirmation: true,
+        };
+        let revision = self.current_revision(view);
+        let plan_id = self.store_plan(view, revision.clone(), prepared_file_edits, summary.clone());
+
+        Ok(PreparePlanOutput {
+            plan_id,
+            workspace_id: view.workspace_id.clone(),
+            workspace_revision: revision,
+            summary,
+            warnings: Vec::new(),
+        })
+    }
+
     pub fn apply_plan(
         &self,
         view: &ViewContext,
@@ -206,7 +265,6 @@ impl Runtime {
         file_edits: Vec<FileEdit>,
     ) -> SpikiResult<(String, String)> {
         self.refresh_workspace(view, None)?;
-        let plan_id = format!("plan_{}", Uuid::now_v7().simple());
         let revision = self.current_revision(view);
         let summary = PlanSummary {
             files_touched: file_edits.len() as u64,
@@ -218,14 +276,26 @@ impl Runtime {
             blocked: Some(0),
             requires_confirmation: true,
         };
+        let plan_id = self.store_plan(view, revision.clone(), file_edits, summary);
 
+        Ok((plan_id, revision))
+    }
+
+    fn store_plan(
+        &self,
+        view: &ViewContext,
+        revision: String,
+        file_edits: Vec<FileEdit>,
+        summary: PlanSummary,
+    ) -> String {
+        let plan_id = format!("plan_{}", Uuid::now_v7().simple());
         let mut meta = view.workspace.meta.lock();
         meta.plans.insert(
             plan_id.clone(),
             StoredPlan {
                 plan_id: plan_id.clone(),
                 view_id: view.view_id.clone(),
-                workspace_revision: revision.clone(),
+                workspace_revision: revision,
                 _created_at: Utc::now(),
                 expires_at: Utc::now()
                     + chrono::Duration::from_std(self.state.config.plan_ttl).unwrap(),
@@ -234,7 +304,6 @@ impl Runtime {
                 state: PlanState::Ready,
             },
         );
-
-        Ok((plan_id, revision))
+        plan_id
     }
 }

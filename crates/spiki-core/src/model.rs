@@ -220,6 +220,23 @@ pub struct SearchTextOutput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct PreparePlanInput {
+    pub file_edits: Vec<FileEdit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparePlanOutput {
+    pub plan_id: String,
+    pub workspace_id: String,
+    pub workspace_revision: String,
+    pub summary: PlanSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<Warning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ApplyPlanInput {
     pub plan_id: String,
     pub expected_workspace_revision: String,

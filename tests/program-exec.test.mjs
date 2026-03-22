@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -270,6 +271,7 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   assert.deepEqual(toolNames, [
     "ae.edit.apply_plan",
     "ae.edit.discard_plan",
+    "ae.edit.prepare_plan",
     "ae.semantic.ensure",
     "ae.semantic.status",
     "ae.workspace.read_spans",
@@ -343,6 +345,43 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   });
   assert.equal(semanticStatusAfterWarm.isError, false);
   assert.equal(semanticStatusAfterWarm.structuredContent.backends[0].state, "ready");
+
+  const preparePlan = await client.request("tools/call", {
+    name: "ae.edit.prepare_plan",
+    arguments: {
+      fileEdits: [
+        {
+          uri: pathToFileURL(path.join(context.workspaceDir, "nested", "example.ts")).toString(),
+          edits: [
+            {
+              range: {
+                start: { line: 0, character: 13 },
+                end: { line: 0, character: 24 }
+              },
+              newText: "preparedValue"
+            }
+          ]
+        }
+      ]
+    }
+  });
+  assert.equal(preparePlan.isError, false);
+  assert.equal(preparePlan.structuredContent.summary.filesTouched, 1);
+  assert.equal(preparePlan.structuredContent.summary.edits, 1);
+
+  const applyPreparedPlan = await client.request("tools/call", {
+    name: "ae.edit.apply_plan",
+    arguments: {
+      planId: preparePlan.structuredContent.planId,
+      expectedWorkspaceRevision: preparePlan.structuredContent.workspaceRevision
+    }
+  });
+  assert.equal(applyPreparedPlan.isError, false);
+  assert.equal(applyPreparedPlan.structuredContent.editsApplied, 1);
+  assert.equal(
+    await readFile(path.join(context.workspaceDir, "nested", "example.ts"), "utf8"),
+    "export const preparedValue = needle;\n"
+  );
 
   const discard = await client.request("tools/call", {
     name: "ae.edit.discard_plan",

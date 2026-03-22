@@ -228,7 +228,7 @@ v0.1 기준 daemon 내부 주 컴포넌트는 아래와 같이 고정한다.
 
 문서 전체는 최종 제품 목표를 서술하지만, **이번 참조 구현의 첫 번째 동작 가능한 마일스톤** 은 아래 범위로 고정한다.
 
-- public MCP tools: `ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure`
+- public MCP tools: `ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.prepare_plan`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure`
 - `ae.semantic.*` 는 Phase 1에서 skeleton 응답만 제공하며, backend lifecycle state를 `off` 기준으로 노출한다.
 - `ae.workspace.search_structure`, `ae.symbol.*`, `ae.refactor.rename_preview`, `ae.diagnostics.read` 는 reserved surface로 유지한다.
 - launcher는 `doctor`, `daemon status`, `daemon stop`, 기본 stdio bridge까지 구현 범위에 포함한다.
@@ -1278,11 +1278,12 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
 6. `ae.symbol.definition`
 7. `ae.symbol.references`
 8. `ae.refactor.rename_preview`
-9. `ae.edit.apply_plan`
-10. `ae.edit.discard_plan`
-11. `ae.semantic.status`
-12. `ae.semantic.ensure`
-13. `ae.diagnostics.read`
+9. `ae.edit.prepare_plan`
+10. `ae.edit.apply_plan`
+11. `ae.edit.discard_plan`
+12. `ae.semantic.status`
+13. `ae.semantic.ensure`
+14. `ae.diagnostics.read`
 
 ### 25.2 공통 규칙
 
@@ -1312,7 +1313,7 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
 본 절의 이름들은 최종 제품 기준 reserved surface다.  
 그러나 구현 Phase에 따라 실제 `tools/list` 에 노출되는 subset은 달라질 수 있다.
 
-- Phase 1 reference build는 `ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure` 만 advertise MUST 한다.
+- Phase 1 reference build는 `ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.prepare_plan`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure` 만 advertise MUST 한다.
 - 아직 advertise하지 않은 이름은 문서상 reserved 상태로 유지한다.
 - client는 advertised subset만 호출해야 하며, phase 미구현 tool에 대한 의존을 기본 흐름으로 두면 안 된다.
 
@@ -1936,7 +1937,47 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
 }
 ```
 
-### 27.9 `ae.edit.apply_plan`
+### 27.9 `ae.edit.prepare_plan`
+
+목적: client가 제안한 file edits를 roots/fingerprint/range 기준으로 검증하고 apply/discard 전에 보관 가능한 plan으로 승격.
+
+#### inputSchema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "fileEdits": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "ae-common.schema.json#/$defs/FileEdit" }
+    }
+  },
+  "required": ["fileEdits"]
+}
+```
+
+#### outputSchema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "planId": { "type": "string" },
+    "workspaceId": { "type": "string" },
+    "workspaceRevision": { "type": "string" },
+    "summary": { "$ref": "ae-common.schema.json#/$defs/PlanSummary" },
+    "warnings": { "type": "array", "items": { "$ref": "ae-common.schema.json#/$defs/Warning" } }
+  },
+  "required": ["planId", "workspaceId", "workspaceRevision", "summary"]
+}
+```
+
+### 27.10 `ae.edit.apply_plan`
 
 목적: 준비된 plan을 실제 파일에 반영.
 
@@ -1975,7 +2016,7 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
 }
 ```
 
-### 27.10 `ae.edit.discard_plan`
+### 27.11 `ae.edit.discard_plan`
 
 목적: plan 폐기.
 
@@ -2008,7 +2049,7 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
 }
 ```
 
-### 27.11 `ae.semantic.status`
+### 27.12 `ae.semantic.status`
 
 목적: semantic backend 상태 조회.
 
@@ -2042,7 +2083,7 @@ Phase 1 reference build는 detected leaf profile을 우선 반환하고, warm/re
 }
 ```
 
-### 27.12 `ae.semantic.ensure`
+### 27.13 `ae.semantic.ensure`
 
 목적: semantic backend를 명시적으로 warm/stop/refresh.
 
