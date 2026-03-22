@@ -1,0 +1,698 @@
+use std::collections::BTreeSet;
+use std::fs;
+
+use spiki_core::model::{FileEdit, Position, Range, SemanticEnsureInput, TextEdit};
+use spiki_core::text::{file_uri_from_path, fingerprint_for_file, read_text_file};
+use spiki_core::{
+    ApplyPlanInput, DiscardPlanInput, ReadSpansInput, Runtime, SearchTextInput,
+    WorkspaceStatusInput,
+};
+use tempfile::tempdir;
+
+#[test]
+fn search_text_respects_gitignore_by_default() {
+    let temp = tempdir().unwrap();
+    fs::write(temp.path().join(".gitignore"), "ignored.txt\n").unwrap();
+    fs::write(temp.path().join("app.ts"), "const needle = 1;\n").unwrap();
+    fs::write(
+        temp.path().join("ignored.txt"),
+        "needle should not appear\n",
+    )
+    .unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let root_uri = file_uri_from_path(temp.path());
+    let view = runtime.upsert_view("session_test", &[root_uri]).unwrap();
+
+    let status = runtime
+        .workspace_status(
+            &view,
+            WorkspaceStatusInput {
+                include_backends: Some(true),
+                include_coverage: Some(true),
+            },
+        )
+        .unwrap();
+    assert_eq!(status.workspace_revision, "rev_1");
+
+    let output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("needle"),
+                mode: None,
+                case_sensitive: None,
+                scope: None,
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.matches.len(), 1);
+    assert!(output.matches[0].uri.ends_with("/app.ts"));
+}
+
+#[test]
+fn search_text_case_insensitive_uses_original_text_offsets() {
+    let temp = tempdir().unwrap();
+    fs::write(temp.path().join("unicode.txt"), "İx\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("x"),
+                mode: None,
+                case_sensitive: Some(false),
+                scope: None,
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.matches.len(), 1);
+    assert_eq!(output.matches[0].range.start.line, 0);
+    assert_eq!(output.matches[0].range.start.character, 1);
+    assert_eq!(output.matches[0].range.end.character, 2);
+}
+
+#[test]
+fn read_spans_returns_context_and_fingerprint() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "alpha\nbeta\ngamma\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .read_spans(
+            &view,
+            ReadSpansInput {
+                spans: vec![spiki_core::model::ReadSpanRequest {
+                    uri: file_uri_from_path(&file_path),
+                    range: Range {
+                        start: Position {
+                            line: 1,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 1,
+                            character: 4,
+                        },
+                    },
+                    context_lines: Some(1),
+                }],
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.spans.len(), 1);
+    assert_eq!(output.spans[0].text, "beta");
+    assert_eq!(output.spans[0].before.as_deref(), Some("alpha\n"));
+    assert_eq!(output.spans[0].after.as_deref(), Some("gamma\n"));
+    assert_eq!(
+        output.spans[0].fingerprint.as_ref().unwrap().line_ending,
+        "lf"
+    );
+}
+
+#[test]
+fn apply_plan_updates_files_and_discard_marks_plan() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\nconsole.log(oldName);\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let loaded = read_text_file(&file_path).unwrap();
+    let fingerprint = fingerprint_for_file(&file_path, &loaded);
+    let (plan_id, revision) = runtime
+        .seed_plan_for_test(
+            &view,
+            vec![FileEdit {
+                uri: file_uri_from_path(&file_path),
+                fingerprint: Some(fingerprint),
+                edits: vec![
+                    TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 6,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 13,
+                            },
+                        },
+                        new_text: String::from("newName"),
+                    },
+                    TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 1,
+                                character: 12,
+                            },
+                            end: Position {
+                                line: 1,
+                                character: 19,
+                            },
+                        },
+                        new_text: String::from("newName"),
+                    },
+                ],
+            }],
+        )
+        .unwrap();
+
+    let apply = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id: plan_id.clone(),
+                expected_workspace_revision: revision.clone(),
+            },
+        )
+        .unwrap();
+    assert!(apply.applied);
+    assert_eq!(apply.previous_revision, revision);
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "const newName = 1;\nconsole.log(newName);\n"
+    );
+
+    let (discard_plan_id, _) = runtime
+        .seed_plan_for_test(
+            &view,
+            vec![FileEdit {
+                uri: file_uri_from_path(&file_path),
+                fingerprint: Some(fingerprint_for_file(
+                    &file_path,
+                    &read_text_file(&file_path).unwrap(),
+                )),
+                edits: vec![TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 6,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 13,
+                        },
+                    },
+                    new_text: String::from("skipName"),
+                }],
+            }],
+        )
+        .unwrap();
+
+    let discarded = runtime
+        .discard_plan(
+            &view,
+            DiscardPlanInput {
+                plan_id: discard_plan_id.clone(),
+            },
+        )
+        .unwrap();
+    assert!(discarded.discarded);
+    assert_eq!(discarded.plan_id, discard_plan_id);
+}
+
+#[test]
+fn semantic_status_detects_built_in_web_framework_profiles() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("src/app")).unwrap();
+    fs::write(
+        temp.path().join("package.json"),
+        r#"{
+  "dependencies": {
+    "react": "18.3.0",
+    "next": "14.2.0",
+    "preact": "10.24.0",
+    "vue": "3.4.0",
+    "nuxt": "3.13.0",
+    "svelte": "5.0.0",
+    "@sveltejs/kit": "2.0.0",
+    "@angular/core": "18.0.0",
+    "astro": "4.0.0",
+    "solid-js": "1.8.0",
+    "@solidjs/start": "1.0.0",
+    "@builder.io/qwik": "1.8.0",
+    "ember-source": "5.0.0",
+    "lit": "3.2.0",
+    "alpinejs": "3.14.0",
+    "gatsby": "5.13.0",
+    "@remix-run/react": "2.11.0",
+    "@remix-run/dev": "2.11.0"
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("tsconfig.json"),
+        "{\n  \"compilerOptions\": {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/app/App.tsx"),
+        "export function App() { return <main />; }\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/app/App.vue"),
+        "<template><div /></template>\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/app/App.svelte"),
+        "<script>let count = 0;</script>\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/app/page.astro"),
+        "---\nconst x = 1;\n---\n<div />\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("angular.json"),
+        "{\n  \"projects\": {}\n}\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("next.config.js"), "module.exports = {};\n").unwrap();
+    fs::write(
+        temp.path().join("nuxt.config.ts"),
+        "export default defineNuxtConfig({});\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("gatsby-config.ts"), "export default {};\n").unwrap();
+    fs::write(
+        temp.path().join("remix.config.js"),
+        "module.exports = {};\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("astro.config.mjs"), "export default {};\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime.semantic_status(&view, None).unwrap();
+    let languages = output
+        .backends
+        .into_iter()
+        .map(|backend| backend.language)
+        .collect::<BTreeSet<_>>();
+
+    for expected in [
+        "react-ts",
+        "nextjs",
+        "remix",
+        "gatsby",
+        "preact",
+        "nuxt",
+        "sveltekit",
+        "angular",
+        "astro",
+        "solidstart",
+        "qwik",
+        "ember",
+        "lit",
+        "alpine",
+    ] {
+        assert!(languages.contains(expected), "missing backend {expected}");
+    }
+}
+
+#[test]
+fn semantic_ensure_returns_web_framework_backend_binding() {
+    let temp = tempdir().unwrap();
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .semantic_ensure(
+            &view,
+            SemanticEnsureInput {
+                language: String::from("astro"),
+                action: Some(String::from("warm")),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.backend.language, "astro");
+    assert_eq!(output.backend.provider.as_deref(), Some("phase1-web:astro"));
+    assert_eq!(output.backend.state, "ready");
+}
+
+#[test]
+fn semantic_status_detects_general_language_profiles() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("src")).unwrap();
+    fs::write(
+        temp.path().join("src/main.c"),
+        "int main(void) { return 0; }\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/main.cpp"),
+        "int main() { return 0; }\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/Main.java"), "class Main {}\n").unwrap();
+    fs::write(temp.path().join("src/Main.kt"), "fun main() = Unit\n").unwrap();
+    fs::write(temp.path().join("src/main.py"), "print('ok')\n").unwrap();
+    fs::write(
+        temp.path().join("src/main.go"),
+        "package main\nfunc main() {}\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(temp.path().join("src/main.rb"), "puts 'ok'\n").unwrap();
+    fs::write(temp.path().join("src/main.swift"), "print(\"ok\")\n").unwrap();
+    fs::write(temp.path().join("src/Program.cs"), "class Program {}\n").unwrap();
+    fs::write(temp.path().join("src/Script.fsx"), "printfn \"ok\"\n").unwrap();
+    fs::write(temp.path().join("src/App.vb"), "Module App\nEnd Module\n").unwrap();
+    fs::write(
+        temp.path().join("src/Main.scala"),
+        "object Main extends App\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/Main.hs"), "main = print \"ok\"\n").unwrap();
+    fs::write(
+        temp.path().join("src/main.ml"),
+        "let () = print_endline \"ok\"\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/main.pas"), "begin end.\n").unwrap();
+    fs::write(temp.path().join("src/main.d"), "void main() {}\n").unwrap();
+    fs::write(
+        temp.path().join("src/main.m"),
+        "@implementation App\n@end\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/main.mm"),
+        "@implementation App\n@end\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/main.php"), "<?php echo 'ok';\n").unwrap();
+    fs::write(temp.path().join("src/main.pl"), "print qq(ok\\n);\n").unwrap();
+    fs::write(temp.path().join("src/main.lua"), "print('ok')\n").unwrap();
+    fs::write(temp.path().join("src/build.sh"), "echo ok\n").unwrap();
+    fs::write(temp.path().join("src/main.asm"), "global _start\n").unwrap();
+    fs::write(
+        temp.path().join("src/main.f90"),
+        "program main\nend program main\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/main.scm"), "(display \"ok\")\n").unwrap();
+    fs::write(
+        temp.path().join("src/main.adb"),
+        "procedure Main is begin null; end Main;\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/main.awk"), "{ print $0 }\n").unwrap();
+    fs::write(temp.path().join("src/main.tcl"), "puts ok\n").unwrap();
+    fs::write(temp.path().join("src/main.r"), "print('ok')\n").unwrap();
+    fs::write(temp.path().join("src/main.jl"), "println(\"ok\")\n").unwrap();
+    fs::write(temp.path().join("src/main.clj"), "(println \"ok\")\n").unwrap();
+    fs::write(temp.path().join("src/main.lisp"), "(print \"ok\")\n").unwrap();
+    fs::write(temp.path().join("src/main.erl"), "main() -> ok.\n").unwrap();
+    fs::write(temp.path().join("src/main.exs"), "IO.puts(\"ok\")\n").unwrap();
+    fs::write(temp.path().join("src/main.dart"), "void main() {}\n").unwrap();
+    fs::write(temp.path().join("src/main.nim"), "echo \"ok\"\n").unwrap();
+    fs::write(temp.path().join("src/main.pro"), "main :- true.\n").unwrap();
+    fs::write(
+        temp.path().join("src/design.sv"),
+        "module design; endmodule\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("src/Main.hx"), "class Main {}\n").unwrap();
+    fs::write(temp.path().join("src/main.bas"), "PRINT \"ok\"\n").unwrap();
+    fs::write(temp.path().join("CMakeLists.txt"), "project(sample)\n").unwrap();
+    fs::write(temp.path().join("pom.xml"), "<project />\n").unwrap();
+    fs::write(temp.path().join("build.gradle.kts"), "plugins { java }\n").unwrap();
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = 'sample'\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("go.mod"), "module example.com/sample\n").unwrap();
+    fs::write(
+        temp.path().join("Cargo.toml"),
+        "[package]\nname = 'sample'\nversion = '0.1.0'\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("sample.csproj"), "<Project />\n").unwrap();
+    fs::write(temp.path().join("sample.fsproj"), "<Project />\n").unwrap();
+    fs::write(temp.path().join("sample.vbproj"), "<Project />\n").unwrap();
+    fs::write(
+        temp.path().join("build.sbt"),
+        "scalaVersion := \"2.13.14\"\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("Package.swift"),
+        "// swift-tools-version: 5.10\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("sample.cabal"), "name: sample\n").unwrap();
+    fs::write(temp.path().join("stack.yaml"), "resolver: lts-22.0\n").unwrap();
+    fs::write(temp.path().join("dune-project"), "(lang dune 3.11)\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime.semantic_status(&view, None).unwrap();
+    let languages = output
+        .backends
+        .into_iter()
+        .map(|backend| backend.language)
+        .collect::<BTreeSet<_>>();
+
+    for expected in [
+        "c-native",
+        "cpp-native",
+        "java-jvm",
+        "java-maven",
+        "java-gradle",
+        "kotlin-jvm",
+        "pyproject-python",
+        "go-module",
+        "cargo-rust",
+        "ruby",
+        "swift-package",
+        "dotnet-csharp",
+        "dotnet-fsharp",
+        "dotnet-vbnet",
+        "scala-sbt",
+        "haskell-cabal",
+        "haskell-stack",
+        "ocaml-opam",
+        "pascal",
+        "d",
+        "php",
+        "perl",
+        "lua",
+        "bash",
+        "assembly",
+        "objective-c",
+        "objective-cpp",
+        "fortran",
+        "scheme",
+        "ada",
+        "awk",
+        "tcl",
+        "r",
+        "julia",
+        "clojure",
+        "common-lisp",
+        "erlang",
+        "elixir",
+        "dart",
+        "nim",
+        "prolog",
+        "systemverilog",
+        "haxe",
+        "freebasic",
+    ] {
+        assert!(languages.contains(expected), "missing backend {expected}");
+    }
+}
+
+#[test]
+fn semantic_status_tracks_leaf_backends_and_actions() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("src")).unwrap();
+    fs::write(
+        temp.path().join("package.json"),
+        r#"{
+  "dependencies": {
+    "react": "18.3.0",
+    "react-dom": "18.3.0"
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("tsconfig.json"),
+        "{\n  \"compilerOptions\": {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("src/App.tsx"),
+        "export function App() { return <main />; }\n",
+    )
+    .unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let initial = runtime.semantic_status(&view, None).unwrap();
+    assert_eq!(initial.backends.len(), 1);
+    assert_eq!(initial.backends[0].language, "react-ts");
+    assert_eq!(initial.backends[0].state, "off");
+
+    let warmed = runtime
+        .semantic_ensure(
+            &view,
+            SemanticEnsureInput {
+                language: String::from("react-ts"),
+                action: Some(String::from("warm")),
+            },
+        )
+        .unwrap();
+    assert_eq!(warmed.backend.language, "react-ts");
+    assert_eq!(warmed.backend.state, "ready");
+
+    let after_warm = runtime.semantic_status(&view, None).unwrap();
+    assert_eq!(after_warm.backends.len(), 1);
+    assert_eq!(after_warm.backends[0].language, "react-ts");
+    assert_eq!(after_warm.backends[0].state, "ready");
+
+    let stopped = runtime
+        .semantic_ensure(
+            &view,
+            SemanticEnsureInput {
+                language: String::from("react-ts"),
+                action: Some(String::from("stop")),
+            },
+        )
+        .unwrap();
+    assert_eq!(stopped.backend.state, "off");
+
+    let after_stop = runtime
+        .semantic_status(&view, Some(String::from("react-ts")))
+        .unwrap();
+    assert_eq!(after_stop.backends.len(), 1);
+    assert_eq!(after_stop.backends[0].state, "off");
+}
+
+#[test]
+fn semantic_ensure_supports_general_language_profiles() {
+    let temp = tempdir().unwrap();
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    for language in [
+        "c",
+        "c-native",
+        "cpp",
+        "cpp-native",
+        "java",
+        "java-jvm",
+        "java-maven",
+        "java-gradle",
+        "kotlin",
+        "kotlin-jvm",
+        "python",
+        "pyproject-python",
+        "go",
+        "go-module",
+        "rust",
+        "cargo-rust",
+        "ruby",
+        "swift",
+        "swift-package",
+        "csharp",
+        "dotnet-csharp",
+        "fsharp",
+        "dotnet-fsharp",
+        "vbnet",
+        "dotnet-vbnet",
+        "scala",
+        "scala-sbt",
+        "haskell",
+        "haskell-cabal",
+        "haskell-stack",
+        "ocaml",
+        "ocaml-opam",
+        "d",
+        "php",
+        "pascal",
+        "lua",
+        "perl",
+        "shell",
+        "bash",
+        "assembly",
+        "objective-c",
+        "objective-cpp",
+        "fortran",
+        "scheme",
+        "ada",
+        "awk",
+        "tcl",
+        "r",
+        "julia",
+        "clojure",
+        "common-lisp",
+        "erlang",
+        "elixir",
+        "dart",
+        "nim",
+        "prolog",
+        "freebasic",
+        "haxe",
+        "systemverilog",
+    ] {
+        let output = runtime
+            .semantic_ensure(
+                &view,
+                SemanticEnsureInput {
+                    language: language.to_string(),
+                    action: Some(String::from("warm")),
+                },
+            )
+            .unwrap();
+        let expected_provider = format!("phase1-general:{language}");
+
+        assert_eq!(output.backend.language, language);
+        assert_eq!(
+            output.backend.provider.as_deref(),
+            Some(expected_provider.as_str())
+        );
+        assert_eq!(output.backend.state, "ready");
+    }
+}
