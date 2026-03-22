@@ -170,6 +170,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
             },
             "includeIgnored": { "type": "boolean" },
             "includeGenerated": { "type": "boolean" },
+            "includeDefaultExcluded": { "type": "boolean" },
             "excludeGlobs": {
                 "type": "array",
                 "items": { "type": "string" }

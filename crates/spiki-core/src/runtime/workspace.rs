@@ -140,7 +140,9 @@ impl Runtime {
         let scan = if scope
             .as_ref()
             .map(|value| {
-                !value.include_ignored.unwrap_or(false) && !value.include_generated.unwrap_or(false)
+                !value.include_ignored.unwrap_or(false)
+                    && !value.include_generated.unwrap_or(false)
+                    && !value.include_default_excluded.unwrap_or(false)
             })
             .unwrap_or(true)
         {
@@ -220,7 +222,13 @@ impl Runtime {
                         .as_ref()
                         .and_then(|value| value.include_generated)
                         .unwrap_or(false),
+                    include_default_excluded: scope
+                        .as_ref()
+                        .and_then(|value| value.include_default_excluded)
+                        .unwrap_or(false),
                     max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
+                    default_exclude_components: self.state.config.default_exclude_components.clone(),
+                    forced_exclude_components: self.state.config.forced_exclude_components.clone(),
                 },
             )?
         };
@@ -357,7 +365,12 @@ impl Runtime {
                 include_generated: scope
                     .and_then(|value| value.include_generated)
                     .unwrap_or(false),
+                include_default_excluded: scope
+                    .and_then(|value| value.include_default_excluded)
+                    .unwrap_or(false),
                 max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
+                default_exclude_components: self.state.config.default_exclude_components.clone(),
+                forced_exclude_components: self.state.config.forced_exclude_components.clone(),
             },
         )?;
         let new_known_files: HashMap<PathBuf, KnownFile> = scan.known_files.into_iter().collect();

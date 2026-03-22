@@ -48,7 +48,24 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
     )
     .await?;
     let listener = UnixListener::bind(&socket_path)?;
-    let runtime = Runtime::new(RuntimeConfig::default());
+    let mut runtime_config = RuntimeConfig::default();
+    if let Ok(value) = std::env::var("SPIKI_DEFAULT_EXCLUDE_COMPONENTS") {
+        runtime_config.default_exclude_components = value
+            .split(',')
+            .map(str::trim)
+            .filter(|component| !component.is_empty())
+            .map(String::from)
+            .collect();
+    }
+    if let Ok(value) = std::env::var("SPIKI_FORCED_EXCLUDE_COMPONENTS") {
+        runtime_config.forced_exclude_components = value
+            .split(',')
+            .map(str::trim)
+            .filter(|component| !component.is_empty())
+            .map(String::from)
+            .collect();
+    }
+    let runtime = Runtime::new(runtime_config);
     let (shutdown_tx, _) = broadcast::channel(2);
 
     let signal_task = tokio::spawn(wait_for_shutdown(shutdown_tx.clone()));

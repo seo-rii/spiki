@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-use spiki_core::model::{FileEdit, Position, Range, SemanticEnsureInput, TextEdit};
+use spiki_core::model::{FileEdit, Position, Range, Scope, SemanticEnsureInput, TextEdit};
 use spiki_core::text::{
     file_uri_from_path, fingerprint_for_file, read_text_file, set_scan_log_path_for_test,
 };
 use spiki_core::{
-    ApplyPlanInput, DiscardPlanInput, PreparePlanInput, ReadSpansInput, Runtime, SearchTextInput,
-    WorkspaceStatusInput,
+    ApplyPlanInput, DiscardPlanInput, PreparePlanInput, ReadSpansInput, Runtime, RuntimeConfig,
+    SearchTextInput, WorkspaceStatusInput,
 };
 use tempfile::tempdir;
 
@@ -91,6 +91,90 @@ fn search_text_scans_workspace_once_by_default() {
             .count(),
         1
     );
+}
+
+#[test]
+fn search_text_can_include_default_excluded_directories_when_requested() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("dist")).unwrap();
+    fs::write(temp.path().join("dist").join("generated.ts"), "const needle = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let default_output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("needle"),
+                mode: None,
+                case_sensitive: None,
+                scope: None,
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+    assert_eq!(default_output.matches.len(), 0);
+
+    let include_default_excluded_output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("needle"),
+                mode: None,
+                case_sensitive: None,
+                scope: Some(Scope {
+                    uris: None,
+                    include_ignored: None,
+                    include_generated: None,
+                    include_default_excluded: Some(true),
+                    exclude_globs: None,
+                    max_files: None,
+                }),
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(include_default_excluded_output.matches.len(), 1);
+    assert!(
+        include_default_excluded_output.matches[0]
+            .uri
+            .ends_with("/dist/generated.ts")
+    );
+}
+
+#[test]
+fn workspace_status_can_index_paths_removed_from_default_excludes() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("dist")).unwrap();
+    fs::write(temp.path().join("dist").join("generated.ts"), "const needle = 1;\n").unwrap();
+
+    let runtime = Runtime::new(RuntimeConfig {
+        max_index_file_size_bytes: 2 * 1024 * 1024,
+        plan_ttl: std::time::Duration::from_secs(30 * 60),
+        default_exclude_components: Vec::new(),
+        forced_exclude_components: vec![String::from(".git")],
+    });
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .workspace_status(
+            &view,
+            WorkspaceStatusInput {
+                include_backends: Some(false),
+                include_coverage: Some(true),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.coverage.unwrap().files_indexed, Some(1));
 }
 
 #[test]

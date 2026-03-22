@@ -83,7 +83,12 @@ pub fn scan_workspace(
             if !seen.insert(canonical.clone()) {
                 continue;
             }
-            if is_default_excluded(&canonical) {
+            if matches_excluded_component(&canonical, &options.forced_exclude_components) {
+                continue;
+            }
+            if !options.include_default_excluded
+                && matches_excluded_component(&canonical, &options.default_exclude_components)
+            {
                 continue;
             }
             if exclude_globs
@@ -239,21 +244,13 @@ fn build_excludes(scope: Option<&Scope>) -> SpikiResult<Option<GlobSet>> {
     })?))
 }
 
-fn is_default_excluded(path: &Path) -> bool {
+fn matches_excluded_component(path: &Path, components: &[String]) -> bool {
     path.components().any(|component| {
-        matches!(
-            component.as_os_str().to_str(),
-            Some(".git")
-                | Some("node_modules")
-                | Some("vendor")
-                | Some("dist")
-                | Some("build")
-                | Some("target")
-                | Some(".next")
-                | Some(".turbo")
-                | Some(".cache")
-                | Some("coverage")
-        )
+        component
+            .as_os_str()
+            .to_str()
+            .map(|value| components.iter().any(|component| component == value))
+            .unwrap_or(false)
     })
 }
 

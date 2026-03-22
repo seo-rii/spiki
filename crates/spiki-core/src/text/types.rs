@@ -24,11 +24,14 @@ pub struct LoadedTextFile {
     pub content_hash: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ScanOptions {
     pub include_ignored: bool,
     pub include_generated: bool,
+    pub include_default_excluded: bool,
     pub max_index_file_size_bytes: u64,
+    pub default_exclude_components: Vec<String>,
+    pub forced_exclude_components: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

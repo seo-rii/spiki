@@ -19,7 +19,7 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 | --- | --- |
 | `ae.workspace.status` | Return roots, workspace revision, coverage, and backend summary for the active view. |
 | `ae.workspace.read_spans` | Read exact ranges from files with optional surrounding context and fingerprints. |
-| `ae.workspace.search_text` | Run literal, regex, or whole-word text search across the workspace. |
+| `ae.workspace.search_text` | Run literal, regex, or whole-word text search across the workspace, with `scope.includeDefaultExcluded` available when you need to traverse default-excluded directories. |
 | `ae.edit.prepare_plan` | Validate and store a new edit plan for later apply or discard. |
 | `ae.edit.apply_plan` | Apply a previously prepared edit plan after compare-and-swap validation. |
 | `ae.edit.discard_plan` | Discard a prepared edit plan without mutating files. |
@@ -54,6 +54,8 @@ node ./bin/spiki.js
 The launcher is the public entrypoint. It will start or reuse the per-user daemon automatically.
 Clients are expected to provide MCP roots during `initialize`.
 If you need to support a roots-less client, opt in explicitly with `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1` and run the launcher from the workspace directory you want to expose.
+Default exclude components such as `dist`, `target`, or `coverage` are configurable defaults, not forced hides.
+Use `scope.includeDefaultExcluded=true` for one search, or set `SPIKI_DEFAULT_EXCLUDE_COMPONENTS` / `SPIKI_FORCED_EXCLUDE_COMPONENTS` on the daemon process for global policy changes.
 
 ## Documentation
 

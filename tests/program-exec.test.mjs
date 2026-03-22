@@ -313,7 +313,8 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
     prefix: "spiki-program-",
     files: {
       "index.ts": "const needle = 1;\nconsole.log(needle);\n",
-      "nested/example.ts": "export const nestedValue = needle;\n"
+      "nested/example.ts": "export const nestedValue = needle;\n",
+      "dist/generated.ts": "export const generatedValue = needle;\n"
     }
   });
   t.after(async () => {
@@ -407,6 +408,20 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   });
   assert.equal(search.isError, false);
   assert.equal(search.structuredContent.matches.length, 3);
+
+  const searchIncludingDefaultExcluded = await client.request("tools/call", {
+    name: "ae.workspace.search_text",
+    arguments: {
+      query: "needle",
+      mode: "literal",
+      limit: 10,
+      scope: {
+        includeDefaultExcluded: true
+      }
+    }
+  });
+  assert.equal(searchIncludingDefaultExcluded.isError, false);
+  assert.equal(searchIncludingDefaultExcluded.structuredContent.matches.length, 4);
 
   const semanticStatus = await client.request("tools/call", {
     name: "ae.semantic.status",

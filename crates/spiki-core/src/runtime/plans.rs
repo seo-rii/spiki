@@ -217,7 +217,10 @@ impl Runtime {
             ScanOptions {
                 include_ignored: false,
                 include_generated: false,
+                include_default_excluded: false,
                 max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
+                default_exclude_components: self.state.config.default_exclude_components.clone(),
+                forced_exclude_components: self.state.config.forced_exclude_components.clone(),
             },
         )?
         .known_files

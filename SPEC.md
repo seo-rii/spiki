@@ -1396,6 +1396,7 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
         },
         "includeIgnored": { "type": "boolean", "default": false },
         "includeGenerated": { "type": "boolean", "default": false },
+        "includeDefaultExcluded": { "type": "boolean", "default": false },
         "excludeGlobs": {
           "type": "array",
           "items": { "type": "string" }
@@ -1673,6 +1674,9 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
 ### 27.3 `ae.workspace.search_text`
 
 목적: ignore-aware 텍스트 검색.
+
+기본 exclude(`dist`, `target`, `coverage` 등)는 convenience default로 취급해야 하며, client는 필요할 때 `scope.includeDefaultExcluded=true`로 이를 우회할 수 있어야 한다.  
+강제 제외는 별도 정책 축으로 유지하고, reference 구현에서는 최소한 `.git` 같은 경계성 디렉터리만 강제 제외로 두는 편이 안전하다.
 
 #### inputSchema
 

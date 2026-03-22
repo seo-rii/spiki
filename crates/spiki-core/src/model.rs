@@ -128,6 +128,8 @@ pub struct Scope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_generated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_default_excluded: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_globs: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_files: Option<usize>,

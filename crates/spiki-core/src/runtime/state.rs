@@ -13,6 +13,8 @@ use crate::text::{CanonicalRoot, KnownFile};
 pub struct RuntimeConfig {
     pub max_index_file_size_bytes: u64,
     pub plan_ttl: Duration,
+    pub default_exclude_components: Vec<String>,
+    pub forced_exclude_components: Vec<String>,
 }
 
 impl Default for RuntimeConfig {
@@ -20,6 +22,18 @@ impl Default for RuntimeConfig {
         Self {
             max_index_file_size_bytes: 2 * 1024 * 1024,
             plan_ttl: Duration::from_secs(30 * 60),
+            default_exclude_components: vec![
+                String::from("node_modules"),
+                String::from("vendor"),
+                String::from("dist"),
+                String::from("build"),
+                String::from("target"),
+                String::from(".next"),
+                String::from(".turbo"),
+                String::from(".cache"),
+                String::from("coverage"),
+            ],
+            forced_exclude_components: vec![String::from(".git")],
         }
     }
 }
