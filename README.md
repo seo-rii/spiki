@@ -52,6 +52,8 @@ node ./bin/spiki.js
 ```
 
 The launcher is the public entrypoint. It will start or reuse the per-user daemon automatically.
+Clients are expected to provide MCP roots during `initialize`.
+If you need to support a roots-less client, opt in explicitly with `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1` and run the launcher from the workspace directory you want to expose.
 
 ## Documentation
 
@@ -66,4 +68,5 @@ The launcher is the public entrypoint. It will start or reuse the per-user daemo
 - `spiki` is still a reference build, not a complete production editor runtime.
 - Phase 1 focuses on reliable text and workspace operations.
 - Semantic lifecycle support is currently a cached skeleton state, not a full semantic engine.
+- Roots-less clients are rejected by default to avoid implicit ACL expansion; the current launcher only allows `cwd` fallback behind `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`.
 - The specification is intentionally ahead of the current implementation in some areas.

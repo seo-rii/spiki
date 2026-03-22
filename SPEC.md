@@ -2249,6 +2249,7 @@ plan 목록이나 workspace-visible resource 집합이 바뀌면 `notifications/
 
 서버는 roots capability가 없는 client도 동작시킬 수 있으나, 이 경우 기본 작업 범위를 명시적으로 제한해야 한다.  
 v1에서는 roots 미지원 client를 기본 비지원으로 두는 것이 안전하다.
+현재 `spiki` launcher reference 구현도 기본적으로 roots 없는 `initialize`를 거부하며, 편의용 `cwd` fallback은 명시 opt-in(`SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`) 뒤에서만 허용한다.
 
 ---
 

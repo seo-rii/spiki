@@ -51,6 +51,10 @@ test("Codex exec can call spiki MCP tools", { timeout: 180000 }, async (t) => {
     `Use the spiki MCP tool ae.workspace.search_text to count the exact number of occurrences of ${token} in the active workspace.`,
     "Return JSON with the integer field matches only."
   ].join(" ");
+  const env = {
+    ...context.env,
+    SPIKI_ALLOW_CWD_ROOT_FALLBACK: "1"
+  };
   const codexArgs = [
     "exec",
     "--skip-git-repo-check",
@@ -80,7 +84,7 @@ test("Codex exec can call spiki MCP tools", { timeout: 180000 }, async (t) => {
   try {
     codexResult = await runProcess("codex", codexArgs, {
       cwd: projectRoot,
-      env: context.env,
+      env,
       timeoutMs: 180000
     });
   } catch (error) {
@@ -90,7 +94,7 @@ test("Codex exec can call spiki MCP tools", { timeout: 180000 }, async (t) => {
 
     codexResult = await runProcess("npx", ["-y", "@openai/codex", ...codexArgs], {
       cwd: projectRoot,
-      env: context.env,
+      env,
       timeoutMs: 180000
     });
   }

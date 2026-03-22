@@ -236,6 +236,7 @@ export async function bridgeStdio() {
   let clientMode = null;
   let stdinBuffer = Buffer.alloc(0);
   let socketBuffer = Buffer.alloc(0);
+  const allowCwdRootFallback = process.env.SPIKI_ALLOW_CWD_ROOT_FALLBACK === "1";
 
   process.stdin.resume();
   const finish = (reject, error) => {
@@ -307,6 +308,22 @@ export async function bridgeStdio() {
           !message.params?.roots &&
           !message.params?.capabilities?.roots
         ) {
+          if (!allowCwdRootFallback) {
+            const response = {
+              jsonrpc: "2.0",
+              id: message.id ?? null,
+              error: {
+                code: -32602,
+                message:
+                  "Client must provide initialize.params.roots or set SPIKI_ALLOW_CWD_ROOT_FALLBACK=1"
+              }
+            };
+            const responsePayload = Buffer.from(JSON.stringify(response), "utf8");
+            process.stdout.write(`Content-Length: ${responsePayload.length}\r\n\r\n`);
+            process.stdout.write(responsePayload);
+            continue;
+          }
+
           const params = message.params ?? {};
           message.params = {
             ...params,
@@ -337,6 +354,21 @@ export async function bridgeStdio() {
         !message.params?.roots &&
         !message.params?.capabilities?.roots
       ) {
+        if (!allowCwdRootFallback) {
+          process.stdout.write(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id ?? null,
+              error: {
+                code: -32602,
+                message:
+                  "Client must provide initialize.params.roots or set SPIKI_ALLOW_CWD_ROOT_FALLBACK=1"
+              }
+            })}\n`
+          );
+          continue;
+        }
+
         const params = message.params ?? {};
         message.params = {
           ...params,

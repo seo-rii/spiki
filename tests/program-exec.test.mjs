@@ -219,6 +219,95 @@ test("spiki launcher handles pipelined initialize and first tool call", { timeou
   assert.equal(workspaceStatus.structuredContent.workspaceRevision, "rev_1");
 });
 
+test("spiki launcher rejects roots-less initialize by default", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-rootless-reject-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await assert.rejects(
+    client.request("initialize", {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: {
+        name: "spiki-rootless-test",
+        version: "0.1.0"
+      }
+    }),
+    /SPIKI_ALLOW_CWD_ROOT_FALLBACK/
+  );
+});
+
+test("spiki launcher can allow roots-less initialize with explicit opt-in", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-rootless-optin-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  const env = {
+    ...context.env,
+    SPIKI_ALLOW_CWD_ROOT_FALLBACK: "1"
+  };
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, [path.join(projectRoot, "bin", "spiki.js")], {
+    cwd: context.workspaceDir,
+    env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  const initialize = await client.request("initialize", {
+    protocolVersion: "2025-11-25",
+    capabilities: {},
+    clientInfo: {
+      name: "spiki-rootless-optin-test",
+      version: "0.1.0"
+    }
+  });
+  client.notify("notifications/initialized");
+
+  assert.equal(initialize.serverInfo.name, "spiki");
+
+  const workspaceStatus = await client.request("tools/call", {
+    name: "ae.workspace.status",
+    arguments: {}
+  });
+  assert.equal(workspaceStatus.isError, false);
+  assert.equal(workspaceStatus.structuredContent.roots[0], context.rootUri);
+});
+
 test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }, async (t) => {
   const context = await createTestEnvironment({
     prefix: "spiki-program-",

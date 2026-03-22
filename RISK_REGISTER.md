@@ -3,7 +3,7 @@
 작성일: 2026-03-22  
 기준 커밋: `7f7459f` (`docs: reorganize project documentation`)  
 범위: `spiki` 레포지토리 (`README`, `docs`, `launcher`, `crates/spiki-core`, `crates/spiki-daemon`, `tests`)  
-우선순위: roots fallback 정책, 배포/플랫폼 정합성, 스캔 정책 설정화 우선  
+우선순위: 배포/플랫폼 정합성, 스캔 정책 설정화, launcher 구조 정리 우선  
 산출물 형식: finding + backlog + test_backlog 스키마 기반 리스크 레지스터
 
 ## 0) 스키마
@@ -29,11 +29,11 @@ open 항목은 아래 필드를 사용한다.
 ## 1) 현재 요약
 
 - `spiki`는 Phase 1 reference build로서 전체 방향이 좋다. Node launcher와 Rust daemon의 역할 분리가 선명하고, public tool surface가 작아서 이해와 확장이 쉽다.
-- 현재 public Phase 1 도구 7개(`ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure`)는 코드와 테스트 흐름에서 대체로 일치한다.
+- 현재 public Phase 1 도구 8개(`ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.prepare_plan`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure`)는 코드와 테스트 흐름에서 대체로 일치한다.
 - `apply_plan`은 `workspace_revision`, view ownership, file fingerprint를 다시 검증하고 있어서 최소한의 CAS 성격은 이미 확보했다.
 - 직전 외부 정적 리뷰에서 지적된 README `docs/` 링크 깨짐은 로컬 `main` 기준으로 해소됐다. 지금은 `README.md`와 `docs/` 구조가 실제 저장소와 맞는다.
-- 현재 open risk의 중심은 문서 품질이 아니라 correctness / completeness 쪽이다. launcher bootstrap race, write path의 인코딩 보존, 외부 edit flow의 미완결성, 기본 search 경로의 이중 스캔, overlapping edit/schema validation 문제는 로컬 `main` 기준으로 해소됐고, 이제 ACL/policy 쪽이 우선순위다.
-- 그 다음 순위는 repeated full scan, 과도한 default excludes, 느슨한 schema/overlap validation, roots 없는 client fallback의 안전성 문제다.
+- 현재 open risk의 중심은 문서 품질이 아니라 제품화/정책 정합성 쪽이다. launcher bootstrap race, write path의 인코딩 보존, 외부 edit flow의 미완결성, 기본 search 경로의 이중 스캔, overlapping edit/schema validation, roots fallback 정책 문제는 로컬 `main` 기준으로 해소됐다.
+- 그 다음 순위는 publishable launcher packaging, platform bootstrap parity, hardcoded scan policy, launcher/runtime 책임 집중 문제다.
 
 ## 2) 2026-03-22 외부 정적 리뷰 재평가
 
@@ -48,7 +48,7 @@ open 항목은 아래 필드를 사용한다.
 | `search_text`의 이중 스캔 | resolved locally | 기본 및 일반 scoped search는 기존 workspace index를 재사용하고, `includeIgnored`/`includeGenerated` 같은 확장 모드에서만 재스캔한다. |
 | hardcoded default excludes | valid / backlog | `scan.rs`가 `vendor`, `dist`, `build`, `target`, `.next`, `.turbo`, `.cache`, `coverage` 등을 강하게 제외한다. |
 | edit overlap / schema validation이 느슨함 | resolved locally | overlapping edit는 `AE_INVALID_REQUEST`로 조기 거부되고, `range`/`scope`/`fingerprint` schema도 더 구체화됐다. |
-| roots 없는 client에 `cwd` root 자동 주입 | valid / open | launcher bridge는 roots capability가 없으면 `process.cwd()`를 묵시적으로 root로 넣는다. |
+| roots 없는 client에 `cwd` root 자동 주입 | resolved locally | launcher bridge는 기본적으로 roots 없는 `initialize`를 거부하고, `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`일 때만 명시 opt-in fallback을 허용한다. |
 
 ## 3) 해소되었거나 stale인 항목
 
@@ -62,12 +62,11 @@ open 항목은 아래 필드를 사용한다.
 | `R-006` public edit flow completeness | resolved locally | `ae.edit.prepare_plan`이 추가됐고 public prepare -> apply 흐름이 tool surface 기준으로 동작한다. |
 | `R-007` default search double scan | resolved locally | 기본 및 일반 scoped `search_text`는 indexed file set을 재사용하고 scan-count regression test가 추가됐다. |
 | `R-008` overlapping edit / loose input schema | resolved locally | overlapping edit는 조기 거부되고 `read_spans`, `search_text`, `prepare_plan` schema가 더 구체화됐다. |
+| `R-009` roots-less client implicit `cwd` fallback | resolved locally | 기본은 reject로 바뀌었고, roots 없는 client 지원은 `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`에서만 허용되며 reject/opt-in 테스트가 추가됐다. |
 
 ## 4) 현재 Open Finding
 
-| id | severity | area | file | evidence | impact | fix_option | test_gap | priority |
-|---|---|---|---|---|---|---|---|---|
-| `F-006` | `P2` | access control / client compatibility | `launcher/runtime.mjs` | roots 미지원 `initialize` 요청에는 `process.cwd()`를 root로 묵시적으로 주입한다. | MCP host 실행 위치에 따라 작업 범위가 바뀌는 묵시적 ACL 확장이 생길 수 있다. | 기본은 reject 또는 explicit opt-in으로 바꾸고, convenience fallback은 설정 플래그 뒤로 숨긴다. | roots 미지원 client의 reject path / opt-in path test가 없다. | medium |
+현재 open finding은 없다. 남은 항목은 backlog 중심이다.
 
 ## 5) 남은 Backlog
 
@@ -83,20 +82,19 @@ open 항목은 아래 필드를 사용한다.
 ## 6) 검증 기준선 (2026-03-22)
 
 - `cargo test --workspace` : pass
-- `npm run test:integration` : pass
+- `node --test ./tests/program-exec.test.mjs ./tests/bootstrap-race.test.mjs` : pass
+- `npm run test:integration` : 환경 의존(Codex CLI quota/availability)으로 변동 가능
 
 ## 7) 남은 테스트 Backlog
 
-| test item | 목적 | priority |
-|---|---|---|
-| `T-005` roots-less client safety | roots 미지원 client에서 reject 또는 explicit opt-in path만 허용되는지 고정한다. | medium |
+현재 별도 test backlog는 없다.
 ## 8) 권장 후속 순서
 
-1. `F-006` roots fallback은 별도 policy 결정 후 고친다.  
-   편의성과 ACL 안전성의 trade-off가 있으므로 기본 정책을 먼저 정해야 한다.
-
-2. `B-003` scan policy 설정화는 별도 라운드로 본다.  
+1. `B-003` scan policy 설정화는 별도 라운드로 본다.  
    기본 search path의 이중 스캔은 줄었지만, exclude policy 자체는 여전히 configuration 문제로 남아 있다.
 
-3. `B-006` schema automation은 구조 정리 라운드로 넘긴다.  
-   현재 schema는 더 구체화됐지만 여전히 hand-written 상태라 long-term drift 위험은 남아 있다.
+2. `B-001` / `B-002` publishable launcher + platform parity는 제품화 라운드에서 함께 다룬다.  
+   npm package surface와 Windows bootstrap model은 reference 구현 다음 단계의 핵심 공백이다.
+
+3. `B-006` schema automation과 `B-004` launcher 구조 정리는 구조 정리 라운드로 넘긴다.  
+   현재는 correctness는 좋아졌지만 long-term drift와 hotspot 문제는 남아 있다.
