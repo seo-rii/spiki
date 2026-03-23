@@ -1,0 +1,33 @@
+name: windows-smoke
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-host-smoke:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build daemon binary
+        run: node ./scripts/build-daemon.mjs
+
+      - name: Run Rust workspace tests
+        run: cargo test --workspace
+
+      - name: Run launcher smoke test
+        run: node --test ./tests/program-exec.test.mjs
