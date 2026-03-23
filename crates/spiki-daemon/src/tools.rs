@@ -3,7 +3,7 @@ use schemars::schema_for;
 use serde_json::{json, Value};
 use spiki_core::{
     ApplyPlanInput, DiscardPlanInput, ExecutionError, PreparePlanInput, ReadSpansInput, Runtime,
-    SearchTextInput, SemanticEnsureInput, WorkspaceStatusInput,
+    SearchTextInput, SemanticEnsureInput, SemanticStatusInput, WorkspaceStatusInput,
 };
 
 use crate::session::Session;
@@ -92,19 +92,16 @@ pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result
             },
             Err(error) => tool_failure(invalid_arguments(error)),
         },
-        "ae.semantic.status" => {
-            let language = arguments
-                .get("language")
-                .and_then(Value::as_str)
-                .map(String::from);
-            match session.runtime.semantic_status(&view, language) {
+        "ae.semantic.status" => match serde_json::from_value::<SemanticStatusInput>(arguments) {
+            Ok(input) => match session.runtime.semantic_status(&view, input.language) {
                 Ok(output) => tool_success(
                     format!("{} semantic backends tracked", output.backends.len()),
                     serde_json::to_value(output)?,
                 ),
                 Err(error) => tool_failure(Runtime::execution_error(error)),
-            }
-        }
+            },
+            Err(error) => tool_failure(invalid_arguments(error)),
+        },
         "ae.semantic.ensure" => match serde_json::from_value::<SemanticEnsureInput>(arguments) {
             Ok(input) => match session.runtime.semantic_ensure(&view, input) {
                 Ok(output) => tool_success(
@@ -142,6 +139,8 @@ pub(crate) fn tool_specs() -> Vec<Value> {
         serde_json::to_value(schema_for!(ApplyPlanInput)).expect("apply plan schema");
     let discard_plan_schema =
         serde_json::to_value(schema_for!(DiscardPlanInput)).expect("discard plan schema");
+    let semantic_status_schema =
+        serde_json::to_value(schema_for!(SemanticStatusInput)).expect("semantic status schema");
     let semantic_ensure_schema =
         serde_json::to_value(schema_for!(SemanticEnsureInput)).expect("semantic ensure schema");
 
@@ -186,13 +185,7 @@ pub(crate) fn tool_specs() -> Vec<Value> {
             "name": "ae.semantic.status",
             "title": "Semantic Status",
             "description": "Return detected leaf semantic backends and their current skeleton lifecycle state for the active workspace.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "language": { "type": "string" }
-                }
-            }
+            "inputSchema": semantic_status_schema
         }),
         json!({
             "name": "ae.semantic.ensure",

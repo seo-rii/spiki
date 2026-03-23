@@ -505,6 +505,17 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   assert.equal(semanticStatusAfterWarm.isError, false);
   assert.equal(semanticStatusAfterWarm.structuredContent.backends[0].state, "ready");
 
+  const invalidSemanticStatus = await client.request("tools/call", {
+    name: "ae.semantic.status",
+    arguments: {
+      language: 42,
+      extra: true
+    }
+  });
+  assert.equal(invalidSemanticStatus.isError, true);
+  assert.equal(invalidSemanticStatus.structuredContent.code, "AE_INVALID_REQUEST");
+  assert.match(invalidSemanticStatus.structuredContent.message, /language|extra/);
+
   const preparePlan = await client.request("tools/call", {
     name: "ae.edit.prepare_plan",
     arguments: {
