@@ -413,6 +413,91 @@ fn apply_plan_updates_files_and_discard_marks_plan() {
 }
 
 #[test]
+fn apply_plan_cleans_up_staged_multifile_artifacts() {
+    let temp = tempdir().unwrap();
+    let first_path = temp.path().join("first.ts");
+    let second_path = temp.path().join("second.ts");
+    fs::write(&first_path, "const firstValue = 1;\n").unwrap();
+    fs::write(&second_path, "const secondValue = 2;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let first_loaded = read_text_file(&first_path).unwrap();
+    let second_loaded = read_text_file(&second_path).unwrap();
+    let (plan_id, revision) = runtime
+        .seed_plan_for_test(
+            &view,
+            vec![
+                FileEdit {
+                    uri: file_uri_from_path(&first_path),
+                    fingerprint: Some(fingerprint_for_file(&first_path, &first_loaded)),
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 6,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 16,
+                            },
+                        },
+                        new_text: String::from("renamedOne"),
+                    }],
+                },
+                FileEdit {
+                    uri: file_uri_from_path(&second_path),
+                    fingerprint: Some(fingerprint_for_file(&second_path, &second_loaded)),
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 6,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 17,
+                            },
+                        },
+                        new_text: String::from("renamedTwo"),
+                    }],
+                },
+            ],
+        )
+        .unwrap();
+
+    let apply = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id,
+                expected_workspace_revision: revision,
+            },
+        )
+        .unwrap();
+    assert!(apply.applied);
+    assert_eq!(
+        fs::read_to_string(&first_path).unwrap(),
+        "const renamedOne = 1;\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&second_path).unwrap(),
+        "const renamedTwo = 2;\n"
+    );
+
+    let leftover_artifacts = fs::read_dir(temp.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.contains(".spiki-tmp-") || name.contains(".spiki-bak-"))
+        .collect::<Vec<_>>();
+    assert!(leftover_artifacts.is_empty(), "{leftover_artifacts:?}");
+}
+
+#[test]
 fn prepare_plan_creates_public_edit_flow() {
     let temp = tempdir().unwrap();
     let file_path = temp.path().join("sample.ts");

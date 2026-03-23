@@ -136,7 +136,6 @@ impl Runtime {
             ));
         }
 
-        let mut original_files = Vec::new();
         let mut rewritten_files = Vec::new();
         let mut files_touched = 0u64;
         let mut edits_applied = 0u64;
@@ -157,12 +156,6 @@ impl Runtime {
                     format!("Plan {} contains an empty file edit", plan.plan_id),
                 ));
             }
-            let original_bytes = fs::read(&canonical).map_err(|error| {
-                spiki_error(
-                    SpikiCode::Internal,
-                    format!("Failed to read {}: {error}", canonical.display()),
-                )
-            })?;
             let loaded = read_text_file(&canonical)?;
             if let Some(expected) = &file_edit.fingerprint {
                 let actual = fingerprint_for_file(&canonical, &loaded);
@@ -204,13 +197,12 @@ impl Runtime {
                     ),
                 ));
             };
-            original_files.push((canonical.clone(), original_bytes));
             rewritten_files.push((canonical, rewritten_bytes));
             files_touched += 1;
             edits_applied += file_edit.edits.len() as u64;
         }
 
-        let mut written = Vec::new();
+        let mut staged_files = Vec::new();
         for (path, content) in &rewritten_files {
             let temp_path = path.with_file_name(format!(
                 ".{}.spiki-tmp-{}",
@@ -219,24 +211,69 @@ impl Runtime {
                     .unwrap_or("spiki"),
                 Uuid::now_v7().simple()
             ));
-            if let Err(error) =
-                fs::write(&temp_path, content).and_then(|_| fs::rename(&temp_path, path))
-            {
+            let backup_path = path.with_file_name(format!(
+                ".{}.spiki-bak-{}",
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("spiki"),
+                Uuid::now_v7().simple()
+            ));
+            if let Err(error) = fs::write(&temp_path, content) {
                 let _ = fs::remove_file(&temp_path);
-                for (rollback_path, rollback_content) in written {
-                    let _ = fs::write(rollback_path, rollback_content);
+                for (_, staged_temp, _) in staged_files {
+                    let _ = fs::remove_file(staged_temp);
                 }
                 return Err(spiki_error(
                     SpikiCode::Internal,
                     format!("Failed to write {}: {error}", path.display()),
                 ));
             }
-            if let Some((_, original)) = original_files
-                .iter()
-                .find(|(saved_path, _)| saved_path == path)
-            {
-                written.push((path.clone(), original.clone()));
+            staged_files.push((path.clone(), temp_path, backup_path));
+        }
+
+        let mut backed_up = Vec::new();
+        for (path, _, backup_path) in &staged_files {
+            if let Err(error) = fs::rename(path, backup_path) {
+                for (_, staged_temp, _) in &staged_files {
+                    let _ = fs::remove_file(staged_temp);
+                }
+                for (rollback_path, rollback_backup) in backed_up.into_iter().rev() {
+                    let _ = fs::rename(rollback_backup, rollback_path);
+                }
+                return Err(spiki_error(
+                    SpikiCode::Internal,
+                    format!("Failed to stage {} for apply: {error}", path.display()),
+                ));
             }
+            backed_up.push((path.clone(), backup_path.clone()));
+        }
+
+        let mut committed = Vec::new();
+        for (index, (path, temp_path, backup_path)) in staged_files.iter().enumerate() {
+            if let Err(error) = fs::rename(temp_path, path) {
+                let _ = fs::remove_file(temp_path);
+                let _ = fs::rename(backup_path, path);
+
+                for (rollback_path, rollback_backup) in committed.into_iter().rev() {
+                    let _ = fs::remove_file(&rollback_path);
+                    let _ = fs::rename(&rollback_backup, &rollback_path);
+                }
+                for (remaining_path, remaining_temp, remaining_backup) in
+                    staged_files.iter().skip(index + 1)
+                {
+                    let _ = fs::remove_file(remaining_temp);
+                    let _ = fs::rename(remaining_backup, remaining_path);
+                }
+                return Err(spiki_error(
+                    SpikiCode::Internal,
+                    format!("Failed to commit {}: {error}", path.display()),
+                ));
+            }
+            committed.push((path.clone(), backup_path.clone()));
+        }
+
+        for (_, backup_path) in committed {
+            let _ = fs::remove_file(backup_path);
         }
 
         plan.state = PlanState::Applied;
