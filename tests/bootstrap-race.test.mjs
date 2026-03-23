@@ -72,6 +72,7 @@ server.listen(socketPath);
   process.env.SPIKI_DAEMON_BIN = fakeDaemonPath;
   process.env.SPIKI_TEST_DAEMON_DELAY_MS = "400";
   process.env.SPIKI_TEST_SPAWN_LOG = spawnLogPath;
+  await rm(context.runtimeDir, { recursive: true, force: true });
 
   t.after(async () => {
     try {

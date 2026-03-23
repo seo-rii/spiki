@@ -13,6 +13,8 @@ node ./scripts/build-daemon.mjs
 
 This produces the local Rust daemon binary used by the launcher.
 
+On Unix-like hosts the launcher talks to the daemon over a Unix domain socket. On Windows it uses a named pipe.
+
 ## Common commands
 
 ### Start the MCP bridge

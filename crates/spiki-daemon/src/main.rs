@@ -1,6 +1,3 @@
-#[cfg(not(unix))]
-compile_error!("spiki-daemon currently supports unix runtime sockets only");
-
 mod app;
 mod protocol;
 mod session;

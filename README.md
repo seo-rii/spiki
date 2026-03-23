@@ -8,6 +8,7 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 
 - Node.js launcher with MCP stdio bridging and on-demand daemon startup
 - Rust daemon with shared workspace/runtime state across requests
+- Local transport over Unix domain sockets on Unix-like hosts and named pipes on Windows
 - Ignore-aware workspace scanning, exact span reads, and text search
 - CAS-style edit plan prepare/apply/discard flow
 - Built-in language profile detection for common web and general-purpose stacks

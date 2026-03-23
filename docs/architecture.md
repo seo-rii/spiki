@@ -6,6 +6,11 @@
 
 The launcher is written in Node.js and acts as the public MCP entrypoint. The daemon is written in Rust and owns the shared runtime.
 
+The runtime transport is local-only:
+
+- Unix domain sockets on Linux and macOS
+- named pipes on Windows
+
 ## Runtime Split
 
 ### Node.js launcher
@@ -13,6 +18,7 @@ The launcher is written in Node.js and acts as the public MCP entrypoint. The da
 - Exposes the MCP server over stdio
 - Starts the daemon on demand if no live instance is available
 - Reuses an existing per-user daemon when possible
+- Uses a filesystem bootstrap lock before daemon spawn
 - Bridges client framing differences before forwarding requests
 - Provides small operational commands such as `doctor`, `daemon status`, and `daemon stop`
 

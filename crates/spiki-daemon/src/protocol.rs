@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 pub(crate) fn id_to_string(id: &Value) -> Result<String> {
     if let Some(value) = id.as_str() {
@@ -16,7 +15,10 @@ pub(crate) fn id_to_string(id: &Value) -> Result<String> {
     Err(anyhow!("unsupported response id"))
 }
 
-pub(crate) async fn read_frame(reader: &mut BufReader<OwnedReadHalf>) -> Result<Option<Value>> {
+pub(crate) async fn read_frame<R>(reader: &mut BufReader<R>) -> Result<Option<Value>>
+where
+    R: AsyncRead + Unpin,
+{
     let mut content_length = None;
 
     loop {
@@ -42,7 +44,10 @@ pub(crate) async fn read_frame(reader: &mut BufReader<OwnedReadHalf>) -> Result<
     Ok(Some(serde_json::from_slice(&payload)?))
 }
 
-pub(crate) async fn write_frame(writer: &mut OwnedWriteHalf, value: &Value) -> Result<()> {
+pub(crate) async fn write_frame<W>(writer: &mut W, value: &Value) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
     let payload = serde_json::to_vec(value)?;
     writer
         .write_all(format!("Content-Length: {}\r\n\r\n", payload.len()).as_bytes())

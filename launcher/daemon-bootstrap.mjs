@@ -6,9 +6,7 @@ import path from "node:path";
 import { getProjectRoot, getRuntimeDir, getSocketPath, resolveDaemonBinary } from "./runtime-paths.mjs";
 
 async function ensureRuntimeDir(runtimeDir) {
-  if (process.platform !== "win32") {
-    await fs.mkdir(runtimeDir, { recursive: true });
-  }
+  await fs.mkdir(runtimeDir, { recursive: true });
 }
 
 async function removeIfExists(targetPath) {
