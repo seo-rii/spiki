@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 
 use chrono::Utc;
@@ -31,10 +32,17 @@ impl Runtime {
 
         let mut prepared_file_edits = Vec::new();
         let mut edits = 0u64;
+        let mut seen_files = BTreeSet::new();
 
         for file_edit in input.file_edits {
             let path = path_from_file_uri(&file_edit.uri)?;
             let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
+            if !seen_files.insert(canonical.clone()) {
+                return Err(spiki_error(
+                    SpikiCode::InvalidRequest,
+                    format!("Duplicate file edit entry for {}", canonical.display()),
+                ));
+            }
             let loaded = read_text_file(&canonical)?;
             let actual = fingerprint_for_file(&canonical, &loaded);
             if let Some(expected) = &file_edit.fingerprint {
@@ -123,10 +131,17 @@ impl Runtime {
         let mut rewritten_files = Vec::new();
         let mut files_touched = 0u64;
         let mut edits_applied = 0u64;
+        let mut seen_files = BTreeSet::new();
 
         for file_edit in &plan.file_edits {
             let path = path_from_file_uri(&file_edit.uri)?;
             let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
+            if !seen_files.insert(canonical.clone()) {
+                return Err(spiki_error(
+                    SpikiCode::InvalidRequest,
+                    format!("Plan {} contains duplicate file edits", plan.plan_id),
+                ));
+            }
             let original_bytes = fs::read(&canonical).map_err(|error| {
                 spiki_error(
                     SpikiCode::Internal,
@@ -189,7 +204,8 @@ impl Runtime {
                     .unwrap_or("spiki"),
                 Uuid::now_v7().simple()
             ));
-            if let Err(error) = fs::write(&temp_path, content).and_then(|_| fs::rename(&temp_path, path))
+            if let Err(error) =
+                fs::write(&temp_path, content).and_then(|_| fs::rename(&temp_path, path))
             {
                 let _ = fs::remove_file(&temp_path);
                 for (rollback_path, rollback_content) in written {

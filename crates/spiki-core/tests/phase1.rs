@@ -98,7 +98,11 @@ fn search_text_scans_workspace_once_by_default() {
 fn search_text_can_include_default_excluded_directories_when_requested() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join("dist")).unwrap();
-    fs::write(temp.path().join("dist").join("generated.ts"), "const needle = 1;\n").unwrap();
+    fs::write(
+        temp.path().join("dist").join("generated.ts"),
+        "const needle = 1;\n",
+    )
+    .unwrap();
 
     let runtime = Runtime::new(Default::default());
     let view = runtime
@@ -142,18 +146,20 @@ fn search_text_can_include_default_excluded_directories_when_requested() {
         .unwrap();
 
     assert_eq!(include_default_excluded_output.matches.len(), 1);
-    assert!(
-        include_default_excluded_output.matches[0]
-            .uri
-            .ends_with("/dist/generated.ts")
-    );
+    assert!(include_default_excluded_output.matches[0]
+        .uri
+        .ends_with("/dist/generated.ts"));
 }
 
 #[test]
 fn workspace_status_can_index_paths_removed_from_default_excludes() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join("dist")).unwrap();
-    fs::write(temp.path().join("dist").join("generated.ts"), "const needle = 1;\n").unwrap();
+    fs::write(
+        temp.path().join("dist").join("generated.ts"),
+        "const needle = 1;\n",
+    )
+    .unwrap();
 
     let runtime = Runtime::new(RuntimeConfig {
         max_index_file_size_bytes: 2 * 1024 * 1024,
@@ -494,6 +500,136 @@ fn prepare_plan_rejects_overlapping_edits() {
         .unwrap_err();
 
     assert_eq!(error.code, "AE_INVALID_REQUEST");
+}
+
+#[test]
+fn prepare_plan_rejects_duplicate_file_edits_for_same_file() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\nconsole.log(oldName);\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let uri = file_uri_from_path(&file_path);
+    let error = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![
+                    FileEdit {
+                        uri: uri.clone(),
+                        fingerprint: None,
+                        edits: vec![TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 6,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 13,
+                                },
+                            },
+                            new_text: String::from("firstName"),
+                        }],
+                    },
+                    FileEdit {
+                        uri,
+                        fingerprint: None,
+                        edits: vec![TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 1,
+                                    character: 12,
+                                },
+                                end: Position {
+                                    line: 1,
+                                    character: 19,
+                                },
+                            },
+                            new_text: String::from("secondName"),
+                        }],
+                    },
+                ],
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "AE_INVALID_REQUEST");
+    assert!(error.message.contains("Duplicate file edit entry"));
+}
+
+#[test]
+fn apply_plan_rejects_stored_duplicate_file_edits() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\nconsole.log(oldName);\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let loaded = read_text_file(&file_path).unwrap();
+    let fingerprint = fingerprint_for_file(&file_path, &loaded);
+    let uri = file_uri_from_path(&file_path);
+    let (plan_id, revision) = runtime
+        .seed_plan_for_test(
+            &view,
+            vec![
+                FileEdit {
+                    uri: uri.clone(),
+                    fingerprint: Some(fingerprint.clone()),
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 6,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 13,
+                            },
+                        },
+                        new_text: String::from("firstName"),
+                    }],
+                },
+                FileEdit {
+                    uri,
+                    fingerprint: Some(fingerprint),
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 1,
+                                character: 12,
+                            },
+                            end: Position {
+                                line: 1,
+                                character: 19,
+                            },
+                        },
+                        new_text: String::from("secondName"),
+                    }],
+                },
+            ],
+        )
+        .unwrap();
+
+    let error = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id,
+                expected_workspace_revision: revision,
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "AE_INVALID_REQUEST");
+    assert!(error.message.contains("contains duplicate file edits"));
 }
 
 #[test]
