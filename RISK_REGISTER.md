@@ -1,7 +1,7 @@
 # spiki Phase 1 리스크 레지스터 (1차)
 
 작성일: 2026-03-23  
-기준 커밋: `5e01427` (`fix: guard daemon bootstrap against live pid races`)  
+기준 커밋: `6695251` (`feat: add windows named-pipe daemon transport`)  
 범위: `spiki` 레포지토리 (`README`, `docs`, `launcher`, `crates/spiki-core`, `crates/spiki-daemon`, `tests`)  
 우선순위: 플랫폼 정합성, runtime ownership 정리 우선  
 산출물 형식: finding + backlog + test_backlog 스키마 기반 리스크 레지스터
@@ -32,8 +32,8 @@ open 항목은 아래 필드를 사용한다.
 - 현재 public Phase 1 도구 8개(`ae.workspace.status`, `ae.workspace.read_spans`, `ae.workspace.search_text`, `ae.edit.prepare_plan`, `ae.edit.apply_plan`, `ae.edit.discard_plan`, `ae.semantic.status`, `ae.semantic.ensure`)는 코드와 테스트 흐름에서 대체로 일치한다.
 - `apply_plan`은 `workspace_revision`, view ownership, file fingerprint를 다시 검증하고 있어서 최소한의 CAS 성격은 이미 확보했다.
 - 직전 외부 정적 리뷰에서 지적된 README `docs/` 링크 깨짐은 로컬 `main` 기준으로 해소됐다. 지금은 `README.md`와 `docs/` 구조가 실제 저장소와 맞는다.
-- 현재 open risk의 중심은 문서 품질이 아니라 구조 유지보수성 쪽이다. launcher bootstrap race, write path의 인코딩 보존, 외부 edit flow의 미완결성, 기본 search 경로의 이중 스캔, overlapping edit/schema validation, roots fallback 정책, hardcoded scan policy, launcher package metadata 문제, launcher hotspot 문제, schema drift 문제, Windows transport gap은 로컬 `main` 기준으로 해소됐다.
-- 현재 남은 핵심 항목은 runtime ownership 집중 문제와 Windows host 실기기 smoke 검증 부재다.
+- 현재 open risk의 중심은 문서 품질이 아니라 환경별 검증 커버리지 쪽이다. launcher bootstrap race, write path의 인코딩 보존, 외부 edit flow의 미완결성, 기본 search 경로의 이중 스캔, overlapping edit/schema validation, roots fallback 정책, hardcoded scan policy, launcher package metadata 문제, launcher hotspot 문제, schema drift 문제, Windows transport gap, runtime ownership 집중 문제는 로컬 `main` 기준으로 해소됐다.
+- 현재 남은 핵심 항목은 Windows host 실기기 smoke 검증 부재다.
 
 ## 2) 2026-03-22 외부 정적 리뷰 재평가
 
@@ -68,16 +68,15 @@ open 항목은 아래 필드를 사용한다.
 | `R-012` launcher runtime hotspot | resolved locally | `runtime.mjs`는 `runtime-paths`, `daemon-bootstrap`, `mcp-bridge`로 분리됐고 bootstrap / bridge regression test가 그대로 통과한다. |
 | `R-013` schema automation gap | resolved locally | 주요 tool input schema는 Rust 타입에서 derive되고, `deny_unknown_fields`로 런타임 파서와 advertised schema의 기준을 맞췄다. |
 | `R-014` Windows named-pipe transport gap | resolved locally | `spiki-daemon`은 더 이상 Unix-only compile guard에 묶이지 않고 generic stream + Windows named pipe listener 경로를 가진다. launcher는 runtime dir를 플랫폼 공통으로 만들고 같은 bootstrap lock 절차를 사용한다. |
+| `R-015` runtime ownership hotspot | resolved locally | shared workspace index 책임은 `runtime/index.rs`로 분리돼 `new`, `upsert_view`, `refresh_workspace`, `current_revision` 경로가 workspace tool logic에서 분리됐다. |
 
 ## 4) 현재 Open Finding
 
-현재 open finding은 없다. 남은 항목은 backlog 중심이다.
+현재 open finding은 없다. 남은 항목은 Windows host 검증용 test backlog뿐이다.
 
 ## 5) 남은 Backlog
 
-| backlog | area | evidence | fix_option | priority |
-|---|---|---|---|---|
-| `B-005` runtime ownership hotspot | maintainability | 현재 `Runtime`는 workspace scan, plan state, semantic skeleton, apply 흐름을 함께 들고 있다. | `WorkspaceIndex`, `PlanStore`, `SemanticSupervisor` 정도로 역할을 쪼갠다. | low |
+현재 별도 backlog는 없다.
 
 ## 6) 검증 기준선 (2026-03-23)
 
@@ -97,6 +96,3 @@ open 항목은 아래 필드를 사용한다.
 
 1. `T-001` Windows host smoke를 별도 환경에서 먼저 확인한다.  
    transport path는 들어갔지만 실제 Windows host e2e는 아직 이 환경에서 재확인하지 못했다.
-
-2. `B-005` runtime ownership hotspot은 semantic/runtime 기능이 더 늘어날 때 선제적으로 쪼개는 편이 좋다.  
-   지금도 동작은 충분하지만 다음 기능 라운드부터는 변경 범위가 커질 가능성이 있다.
