@@ -70,6 +70,8 @@ test("Codex exec can call spiki MCP tools", { timeout: 180000 }, async (t) => {
     "-c",
     `mcp_servers.spiki.args=${JSON.stringify([path.join(projectRoot, "bin", "spiki.js")])}`,
     "-c",
+    'mcp_servers.spiki.env={ SPIKI_ALLOW_CWD_ROOT_FALLBACK = "1" }',
+    "-c",
     `mcp_servers.spiki.cwd=${JSON.stringify(context.workspaceDir)}`,
     "--output-schema",
     schemaPath,

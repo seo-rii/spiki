@@ -174,6 +174,33 @@ export async function ensureDaemonRunning() {
       return { projectRoot, runtimeDir, socketPath, daemonBin };
     }
 
+    const livePid = await readPid(runtimeDir);
+    if (livePid && isProcessAlive(livePid)) {
+      const liveDaemonDeadline = Date.now() + 2000;
+      while (Date.now() < liveDaemonDeadline) {
+        if (await isDaemonReachable(socketPath, 250)) {
+          return { projectRoot, runtimeDir, socketPath, daemonBin };
+        }
+
+        if (!isProcessAlive(livePid)) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      if (isProcessAlive(livePid)) {
+        throw new Error(
+          `Refusing to spawn a second spiki daemon while pid ${livePid} is alive but socket ${socketPath} is unreachable`
+        );
+      }
+
+      await cleanupStaleRuntime(runtimeDir, socketPath);
+      if (await isDaemonReachable(socketPath, 250)) {
+        return { projectRoot, runtimeDir, socketPath, daemonBin };
+      }
+    }
+
     try {
       await fs.access(daemonBin);
     } catch {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -217,6 +217,61 @@ test("spiki launcher handles pipelined initialize and first tool call", { timeou
   assert.equal(initialize.serverInfo.name, "spiki");
   assert.equal(workspaceStatus.isError, false);
   assert.equal(workspaceStatus.structuredContent.workspaceRevision, "rev_1");
+});
+
+test("spiki launcher refuses to spawn over a live unreachable daemon pid", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-live-pid-guard-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  const blocker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: "ignore"
+  });
+  t.after(async () => {
+    if (blocker.exitCode === null && blocker.signalCode === null) {
+      blocker.kill("SIGTERM");
+      await new Promise((resolve) => blocker.once("exit", resolve));
+    }
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  assert.equal(typeof blocker.pid, "number");
+  await writeFile(path.join(context.runtimeDir, "daemon.pid"), `${blocker.pid}\n`);
+
+  const guardScript = [
+    'import { ensureDaemonRunning } from "./launcher/daemon-bootstrap.mjs";',
+    "try {",
+    "  await ensureDaemonRunning();",
+    '  console.error("unexpected success");',
+    "  process.exit(1);",
+    "} catch (error) {",
+    "  const message = error instanceof Error ? error.message : String(error);",
+    '  if (!message.includes("Refusing to spawn a second spiki daemon")) {',
+    "    console.error(message);",
+    "    process.exit(2);",
+    "  }",
+    "}"
+  ].join("\n");
+  const result = await runProcess(
+    process.execPath,
+    ["--input-type=module", "-e", guardScript],
+    {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 10000
+    }
+  );
+
+  assert.equal(result.code, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 });
 
 test("spiki launcher rejects roots-less initialize by default", { timeout: 60000 }, async (t) => {
