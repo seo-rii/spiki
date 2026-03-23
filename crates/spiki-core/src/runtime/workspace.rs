@@ -177,7 +177,7 @@ impl Runtime {
             .as_ref()
             .and_then(|value| value.max_files)
             .unwrap_or(usize::MAX);
-        let mut truncated = false;
+        let mut truncated = scan.files.len() > max_files;
 
         for path in scan.files.into_iter().take(max_files) {
             let file = match read_text_file(&path) {

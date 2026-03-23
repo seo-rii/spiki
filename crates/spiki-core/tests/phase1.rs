@@ -152,6 +152,42 @@ fn search_text_can_include_default_excluded_directories_when_requested() {
 }
 
 #[test]
+fn search_text_marks_truncated_when_max_files_limits_search() {
+    let temp = tempdir().unwrap();
+    fs::write(temp.path().join("a.ts"), "const value = 1;\n").unwrap();
+    fs::write(temp.path().join("b.ts"), "const needle = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("needle"),
+                mode: None,
+                case_sensitive: None,
+                scope: Some(Scope {
+                    uris: None,
+                    include_ignored: None,
+                    include_generated: None,
+                    include_default_excluded: None,
+                    exclude_globs: None,
+                    max_files: Some(1),
+                }),
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.matches.len(), 0);
+    assert!(output.truncated);
+}
+
+#[test]
 fn workspace_status_can_index_paths_removed_from_default_excludes() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join("dist")).unwrap();
