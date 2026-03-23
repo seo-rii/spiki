@@ -633,6 +633,72 @@ fn apply_plan_rejects_stored_duplicate_file_edits() {
 }
 
 #[test]
+fn prepare_plan_rejects_empty_file_edit() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let error = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: None,
+                    edits: Vec::new(),
+                }],
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "AE_INVALID_REQUEST");
+    assert!(error.message.contains("must contain at least one edit"));
+}
+
+#[test]
+fn apply_plan_rejects_stored_empty_file_edit() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let loaded = read_text_file(&file_path).unwrap();
+    let fingerprint = fingerprint_for_file(&file_path, &loaded);
+    let (plan_id, revision) = runtime
+        .seed_plan_for_test(
+            &view,
+            vec![FileEdit {
+                uri: file_uri_from_path(&file_path),
+                fingerprint: Some(fingerprint),
+                edits: Vec::new(),
+            }],
+        )
+        .unwrap();
+
+    let error = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id,
+                expected_workspace_revision: revision,
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "AE_INVALID_REQUEST");
+    assert!(error.message.contains("contains an empty file edit"));
+}
+
+#[test]
 fn apply_plan_preserves_original_file_encoding_and_bom() {
     let temp = tempdir().unwrap();
     let runtime = Runtime::new(Default::default());

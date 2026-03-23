@@ -43,6 +43,15 @@ impl Runtime {
                     format!("Duplicate file edit entry for {}", canonical.display()),
                 ));
             }
+            if file_edit.edits.is_empty() {
+                return Err(spiki_error(
+                    SpikiCode::InvalidRequest,
+                    format!(
+                        "File edit for {} must contain at least one edit",
+                        canonical.display()
+                    ),
+                ));
+            }
             let loaded = read_text_file(&canonical)?;
             let actual = fingerprint_for_file(&canonical, &loaded);
             if let Some(expected) = &file_edit.fingerprint {
@@ -140,6 +149,12 @@ impl Runtime {
                 return Err(spiki_error(
                     SpikiCode::InvalidRequest,
                     format!("Plan {} contains duplicate file edits", plan.plan_id),
+                ));
+            }
+            if file_edit.edits.is_empty() {
+                return Err(spiki_error(
+                    SpikiCode::InvalidRequest,
+                    format!("Plan {} contains an empty file edit", plan.plan_id),
                 ));
             }
             let original_bytes = fs::read(&canonical).map_err(|error| {
