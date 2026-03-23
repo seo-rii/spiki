@@ -363,6 +363,33 @@ test("spiki launcher can allow roots-less initialize with explicit opt-in", { ti
   assert.equal(workspaceStatus.structuredContent.roots[0], context.rootUri);
 });
 
+test("spiki launcher exits cleanly on malformed content-length input", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-malformed-bridge-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const result = await runProcess(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdinText: "content-length: 1\r\n\r\n{",
+    timeoutMs: 10000
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Invalid JSON from client/);
+});
+
 test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }, async (t) => {
   const context = await createTestEnvironment({
     prefix: "spiki-program-",
