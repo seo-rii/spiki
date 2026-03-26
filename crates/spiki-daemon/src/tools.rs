@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use schemars::{schema_for, JsonSchema};
 use serde_json::{json, Map, Value};
 use spiki_core::{
@@ -8,7 +8,11 @@ use spiki_core::{
 
 use crate::session::Session;
 
-pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result<Value> {
+pub(crate) async fn handle_tool_call(
+    session: &Session,
+    request_id: &str,
+    params: Value,
+) -> Result<Value> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -17,7 +21,34 @@ pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let progress_token = params
+        .get("_meta")
+        .and_then(|value| value.get("progressToken"))
+        .filter(|value| value.is_string() || value.is_i64() || value.is_u64())
+        .cloned();
+
+    if let Some(progress_token) = &progress_token {
+        session
+            .send_progress(
+                progress_token,
+                1,
+                3,
+                &format!("Resolving workspace view for {name}"),
+            )
+            .await?;
+    }
+    if session.is_request_cancelled(request_id).await {
+        return Err(anyhow!("request cancelled"));
+    }
     let view = session.ensure_view().await?;
+    if let Some(progress_token) = &progress_token {
+        session
+            .send_progress(progress_token, 2, 3, &format!("Running {name}"))
+            .await?;
+    }
+    if session.is_request_cancelled(request_id).await {
+        return Err(anyhow!("request cancelled"));
+    }
 
     let result = match name {
         "ae.workspace.status" => match serde_json::from_value::<WorkspaceStatusInput>(arguments) {
@@ -128,6 +159,15 @@ pub(crate) async fn handle_tool_call(session: &Session, params: Value) -> Result
             details: None,
         }),
     };
+
+    if session.is_request_cancelled(request_id).await {
+        return Err(anyhow!("request cancelled"));
+    }
+    if let Some(progress_token) = &progress_token {
+        session
+            .send_progress(progress_token, 3, 3, &format!("Completed {name}"))
+            .await?;
+    }
 
     Ok(result)
 }

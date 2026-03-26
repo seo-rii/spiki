@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -20,6 +20,8 @@ pub(crate) struct Session {
     pub(crate) runtime: Runtime,
     pub(crate) writer: mpsc::UnboundedSender<Value>,
     pub(crate) pending: Mutex<HashMap<String, oneshot::Sender<Value>>>,
+    pub(crate) incoming_requests: Mutex<HashSet<String>>,
+    pub(crate) cancelled_requests: Mutex<HashSet<String>>,
     pub(crate) request_lock: Mutex<()>,
     pub(crate) roots: Mutex<RootsState>,
     pub(crate) next_request_id: AtomicU64,
@@ -36,8 +38,7 @@ pub(crate) struct RootsState {
 pub(crate) async fn handle_message(session: Arc<Session>, message: Value) -> Result<()> {
     let Some(id) = message.get("id").cloned() else {
         if let Some(method) = message.get("method").and_then(Value::as_str) {
-            let _request_guard = session.request_lock.lock().await;
-            handle_notification(&session, method).await?;
+            handle_notification(&session, method, message.get("params")).await?;
         }
         return Ok(());
     };
@@ -50,20 +51,38 @@ pub(crate) async fn handle_message(session: Arc<Session>, message: Value) -> Res
         return Ok(());
     }
 
+    let id_text = id_to_string(&id)?;
     let _request_guard = session.request_lock.lock().await;
     let method = message
         .get("method")
         .and_then(Value::as_str)
         .context("request missing method")?;
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-    match handle_request(&session, method, params).await {
-        Ok(result) => send_response(&session, id, result)?,
-        Err(error) => send_protocol_error(&session, id, error)?,
+    if session.is_request_cancelled(&id_text).await {
+        session.finish_incoming_request(&id_text).await;
+        return Ok(());
     }
+
+    let request_result = handle_request(&session, &id_text, method, params).await;
+    let was_cancelled = session.is_request_cancelled(&id_text).await;
+    let send_result = if was_cancelled {
+        Ok(())
+    } else {
+        match request_result {
+            Ok(result) => send_response(&session, id, result),
+            Err(error) => send_protocol_error(&session, id, error),
+        }
+    };
+    session.finish_incoming_request(&id_text).await;
+    send_result?;
     Ok(())
 }
 
-async fn handle_notification(session: &Arc<Session>, method: &str) -> Result<()> {
+async fn handle_notification(
+    session: &Arc<Session>,
+    method: &str,
+    params: Option<&Value>,
+) -> Result<()> {
     if method == "notifications/initialized" {
         return Ok(());
     }
@@ -71,10 +90,19 @@ async fn handle_notification(session: &Arc<Session>, method: &str) -> Result<()>
         session.roots.lock().await.dirty = true;
         return Ok(());
     }
+    if method == "notifications/cancelled" {
+        session.mark_request_cancelled(params).await;
+        return Ok(());
+    }
     Ok(())
 }
 
-async fn handle_request(session: &Arc<Session>, method: &str, params: Value) -> Result<Value> {
+async fn handle_request(
+    session: &Arc<Session>,
+    request_id: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
     match method {
         "initialize" => handle_initialize(session, params).await,
         "ping" => Ok(json!({})),
@@ -88,7 +116,7 @@ async fn handle_request(session: &Arc<Session>, method: &str, params: Value) -> 
         })),
         "shutdown" => Ok(Value::Null),
         "tools/list" => Ok(json!({ "tools": tool_specs() })),
-        "tools/call" => handle_tool_call(session, params).await,
+        "tools/call" => handle_tool_call(session, request_id, params).await,
         other => Err(anyhow!("method not found: {other}")),
     }
 }
@@ -130,6 +158,39 @@ async fn handle_initialize(session: &Arc<Session>, params: Value) -> Result<Valu
 }
 
 impl Session {
+    pub(crate) async fn note_incoming_request(&self, request_id: String) {
+        self.incoming_requests.lock().await.insert(request_id);
+    }
+
+    pub(crate) async fn is_request_cancelled(&self, request_id: &str) -> bool {
+        self.cancelled_requests.lock().await.contains(request_id)
+    }
+
+    pub(crate) async fn send_progress(
+        &self,
+        progress_token: &Value,
+        progress: u64,
+        total: u64,
+        message: &str,
+    ) -> Result<()> {
+        let mut params = json!({
+            "progressToken": progress_token,
+            "progress": progress,
+            "total": total,
+            "message": message
+        });
+        if !progress_token.is_string() && !progress_token.is_u64() && !progress_token.is_i64() {
+            return Ok(());
+        }
+        self.writer
+            .send(json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": params.take()
+            }))
+            .map_err(|_| anyhow!("failed to queue progress notification"))
+    }
+
     pub(crate) async fn ensure_view(&self) -> Result<spiki_core::ViewContext> {
         let roots = self.ensure_roots().await?;
         self.runtime
@@ -192,6 +253,25 @@ impl Session {
         }
         Ok(roots)
     }
+
+    async fn mark_request_cancelled(&self, params: Option<&Value>) {
+        let Some(request_id) = params
+            .and_then(|value| value.get("requestId"))
+            .and_then(parse_request_id)
+        else {
+            return;
+        };
+
+        if !self.incoming_requests.lock().await.contains(&request_id) {
+            return;
+        }
+        self.cancelled_requests.lock().await.insert(request_id);
+    }
+
+    async fn finish_incoming_request(&self, request_id: &str) {
+        self.incoming_requests.lock().await.remove(request_id);
+        self.cancelled_requests.lock().await.remove(request_id);
+    }
 }
 
 fn parse_root_uris(value: Option<&Value>) -> Option<Vec<String>> {
@@ -211,6 +291,14 @@ fn parse_root_uris(value: Option<&Value>) -> Option<Vec<String>> {
     }
 
     Some(uris)
+}
+
+fn parse_request_id(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(String::from)
+        .or_else(|| value.as_i64().map(|number| number.to_string()))
+        .or_else(|| value.as_u64().map(|number| number.to_string()))
 }
 
 fn send_response(session: &Session, id: Value, result: Value) -> Result<()> {

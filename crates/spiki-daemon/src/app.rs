@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::protocol::{read_frame, write_frame};
+use crate::protocol::{id_to_string, read_frame, write_frame};
 use crate::session::{handle_message, RootsState, Session};
 
 pub(crate) struct Args {
@@ -249,6 +249,8 @@ async fn handle_connection(
         runtime,
         writer: writer_tx,
         pending: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        incoming_requests: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+        cancelled_requests: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         request_lock: tokio::sync::Mutex::new(()),
         roots: tokio::sync::Mutex::new(RootsState::default()),
         next_request_id: std::sync::atomic::AtomicU64::new(1),
@@ -271,6 +273,15 @@ async fn handle_connection(
                     break;
                 };
                 if message.get("method").is_some() {
+                    if message.get("id").is_none() {
+                        if let Err(error) = handle_message(session.clone(), message).await {
+                            error!("failed to handle notification: {error:#}");
+                        }
+                        continue;
+                    }
+                    if let Some(request_id) = message.get("id").and_then(|value| id_to_string(value).ok()) {
+                        session.note_incoming_request(request_id).await;
+                    }
                     if request_tx.send(message).is_err() {
                         break;
                     }

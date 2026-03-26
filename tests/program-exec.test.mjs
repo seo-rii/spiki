@@ -8,11 +8,14 @@ import { pathToFileURL } from "node:url";
 import { createTestEnvironment, projectRoot, runProcess } from "./lib/test-env.mjs";
 
 class McpLauncherClient {
-  constructor(child, rootUri) {
+  constructor(child, rootUri, options = {}) {
     this.child = child;
     this.rootUri = rootUri;
+    this.options = options;
     this.buffer = Buffer.alloc(0);
     this.pending = new Map();
+    this.notifications = [];
+    this.deferredRootsList = null;
     this.nextId = 1;
     this.exitResult = null;
     this.exitPromise = new Promise((resolve) => {
@@ -61,8 +64,8 @@ class McpLauncherClient {
     this.child.stdin.write(payload);
   }
 
-  request(method, params = {}) {
-    const id = String(this.nextId++);
+  request(method, params = {}, options = {}) {
+    const id = String(options.id ?? this.nextId++);
     this.send({
       jsonrpc: "2.0",
       id,
@@ -74,7 +77,7 @@ class McpLauncherClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Timed out waiting for ${method}`));
-      }, 5000);
+      }, options.timeoutMs ?? 5000);
 
       this.pending.set(id, {
         resolve: (result) => {
@@ -97,19 +100,55 @@ class McpLauncherClient {
     });
   }
 
+  deferNextRootsList() {
+    if (this.deferredRootsList) {
+      throw new Error("roots/list deferral already armed");
+    }
+    let resolveRequest;
+    const request = new Promise((resolve) => {
+      resolveRequest = resolve;
+    });
+    this.deferredRootsList = {
+      message: null,
+      resolveRequest
+    };
+    return request;
+  }
+
+  releaseDeferredRootsList() {
+    if (!this.deferredRootsList?.message) {
+      throw new Error("no deferred roots/list request to release");
+    }
+    this.replyToRootsList(this.deferredRootsList.message);
+    this.deferredRootsList = null;
+  }
+
+  replyToRootsList(message) {
+    this.send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        roots: [{ uri: this.rootUri, name: "integration" }]
+      }
+    });
+  }
+
   handleMessage(message) {
     if (message.method === "roots/list") {
-      this.send({
-        jsonrpc: "2.0",
-        id: message.id,
-        result: {
-          roots: [{ uri: this.rootUri, name: "integration" }]
-        }
-      });
+      if (this.deferredRootsList) {
+        this.deferredRootsList.message = message;
+        this.deferredRootsList.resolveRequest(message);
+        return;
+      }
+      this.replyToRootsList(message);
       return;
     }
 
     if (message.method) {
+      this.notifications.push(message);
+      if (message.id == null) {
+        return;
+      }
       this.send({
         jsonrpc: "2.0",
         id: message.id,
@@ -415,6 +454,136 @@ test("spiki launcher exits cleanly on oversized client frames", { timeout: 60000
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /client frame exceeds 1048576 bytes/);
+});
+
+test("spiki launcher emits progress notifications for tool calls with progress tokens", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-progress-",
+    files: {
+      "index.ts": "const needle = 1;\nconsole.log(needle);\n",
+      "nested/example.ts": "export const nestedValue = needle;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await client.initialize();
+  const notificationOffset = client.notifications.length;
+  const search = await client.request("tools/call", {
+    name: "ae.workspace.search_text",
+    arguments: {
+      query: "needle",
+      mode: "literal",
+      limit: 10
+    },
+    _meta: {
+      progressToken: "progress-search"
+    }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(search.isError, false);
+  const progressNotifications = client.notifications
+    .slice(notificationOffset)
+    .filter(
+      (message) =>
+        message.method === "notifications/progress" &&
+        message.params?.progressToken === "progress-search"
+    );
+  assert.deepEqual(
+    progressNotifications.map((message) => message.params.progress),
+    [1, 2, 3]
+  );
+  assert.deepEqual(
+    progressNotifications.map((message) => message.params.total),
+    [3, 3, 3]
+  );
+  assert.match(progressNotifications[0].params.message, /Resolving workspace view/u);
+  assert.match(progressNotifications[1].params.message, /Running ae\.workspace\.search_text/u);
+  assert.match(progressNotifications[2].params.message, /Completed ae\.workspace\.search_text/u);
+});
+
+test("spiki launcher suppresses responses for cancelled queued tool requests", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-cancel-queued-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await client.initialize();
+  const deferredRootsList = client.deferNextRootsList();
+  client.notify("notifications/roots/list_changed");
+
+  const blockingRequest = client.request(
+    "tools/call",
+    {
+      name: "ae.workspace.status",
+      arguments: {
+        includeCoverage: true
+      }
+    },
+    { id: "blocking-request" }
+  );
+  await deferredRootsList;
+
+  const cancelledRequest = client.request(
+    "tools/call",
+    {
+      name: "ae.workspace.search_text",
+      arguments: {
+        query: "answer",
+        mode: "literal",
+        limit: 10
+      }
+    },
+    { id: "cancelled-request", timeoutMs: 1000 }
+  );
+  client.notify("notifications/cancelled", {
+    requestId: "cancelled-request",
+    reason: "integration test"
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  client.releaseDeferredRootsList();
+
+  const blockingResult = await blockingRequest;
+  assert.equal(blockingResult.isError, false);
+  await assert.rejects(cancelledRequest, /Timed out waiting for tools\/call/u);
 });
 
 test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }, async (t) => {
