@@ -14,9 +14,15 @@ use crate::text::{
 };
 
 use super::error::{spiki_error, SpikiCode, SpikiResult};
-use super::state::{PlanState, Runtime, StoredPlan, ViewContext};
+use super::state::{PlanState, Runtime, StoredPlan, ViewContext, WorkspaceMeta};
 
 impl Runtime {
+    fn sweep_terminal_plans(meta: &mut WorkspaceMeta) {
+        let now = Utc::now();
+        meta.plans
+            .retain(|_, plan| plan.state == PlanState::Ready && plan.expires_at > now);
+    }
+
     pub fn prepare_plan(
         &self,
         view: &ViewContext,
@@ -99,8 +105,9 @@ impl Runtime {
         self.refresh_workspace(view, None)?;
         let _guard = view.workspace.write_lock.lock();
         let mut meta = view.workspace.meta.lock();
+        Self::sweep_terminal_plans(&mut meta);
         let current_revision = format!("rev_{}", meta.revision);
-        let plan = meta.plans.get_mut(&input.plan_id).ok_or_else(|| {
+        let plan = meta.plans.get(&input.plan_id).cloned().ok_or_else(|| {
             spiki_error(
                 SpikiCode::NotFound,
                 format!("Plan {} not found", input.plan_id),
@@ -108,13 +115,14 @@ impl Runtime {
         })?;
 
         if plan.expires_at <= Utc::now() {
-            plan.state = PlanState::Expired;
+            meta.plans.remove(&input.plan_id);
             return Err(spiki_error(
                 SpikiCode::StalePlan,
                 format!("Plan {} has expired", plan.plan_id),
             ));
         }
         if plan.state != PlanState::Ready {
+            meta.plans.remove(&input.plan_id);
             return Err(spiki_error(
                 SpikiCode::Conflict,
                 format!("Plan {} is not ready to apply", plan.plan_id),
@@ -129,7 +137,7 @@ impl Runtime {
         if plan.workspace_revision != input.expected_workspace_revision
             || current_revision != input.expected_workspace_revision
         {
-            plan.state = PlanState::Stale;
+            meta.plans.remove(&input.plan_id);
             return Err(spiki_error(
                 SpikiCode::StalePlan,
                 format!("Plan {} is stale", plan.plan_id),
@@ -145,12 +153,14 @@ impl Runtime {
             let path = path_from_file_uri(&file_edit.uri)?;
             let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
             if !seen_files.insert(canonical.clone()) {
+                meta.plans.remove(&input.plan_id);
                 return Err(spiki_error(
                     SpikiCode::InvalidRequest,
                     format!("Plan {} contains duplicate file edits", plan.plan_id),
                 ));
             }
             if file_edit.edits.is_empty() {
+                meta.plans.remove(&input.plan_id);
                 return Err(spiki_error(
                     SpikiCode::InvalidRequest,
                     format!("Plan {} contains an empty file edit", plan.plan_id),
@@ -160,7 +170,7 @@ impl Runtime {
             if let Some(expected) = &file_edit.fingerprint {
                 let actual = fingerprint_for_file(&canonical, &loaded);
                 if &actual != expected {
-                    plan.state = PlanState::Stale;
+                    meta.plans.remove(&input.plan_id);
                     return Err(spiki_error(
                         SpikiCode::StalePlan,
                         format!("Fingerprint mismatch for {}", file_edit.uri),
@@ -276,7 +286,7 @@ impl Runtime {
             let _ = fs::remove_file(backup_path);
         }
 
-        plan.state = PlanState::Applied;
+        meta.plans.remove(&input.plan_id);
         meta.revision += 1;
         let next_revision = format!("rev_{}", meta.revision);
         meta.known_files = scan_workspace(
@@ -313,9 +323,10 @@ impl Runtime {
     ) -> SpikiResult<DiscardPlanOutput> {
         self.refresh_workspace(view, None)?;
         let mut meta = view.workspace.meta.lock();
-        let discarded = if let Some(plan) = meta.plans.get_mut(&input.plan_id) {
+        Self::sweep_terminal_plans(&mut meta);
+        let discarded = if let Some(plan) = meta.plans.get(&input.plan_id) {
             if plan.view_id == view.view_id {
-                plan.state = PlanState::Discarded;
+                meta.plans.remove(&input.plan_id);
                 true
             } else {
                 false
@@ -361,6 +372,7 @@ impl Runtime {
     ) -> String {
         let plan_id = format!("plan_{}", Uuid::now_v7().simple());
         let mut meta = view.workspace.meta.lock();
+        Self::sweep_terminal_plans(&mut meta);
         meta.plans.insert(
             plan_id.clone(),
             StoredPlan {

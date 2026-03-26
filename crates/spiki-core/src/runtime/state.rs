@@ -78,10 +78,7 @@ pub(crate) struct WorkspaceMeta {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanState {
     Ready,
-    Applied,
-    Discarded,
     Stale,
-    Expired,
 }
 
 #[derive(Debug, Clone)]

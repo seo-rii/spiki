@@ -373,6 +373,16 @@ fn apply_plan_updates_files_and_discard_marks_plan() {
         fs::read_to_string(&file_path).unwrap(),
         "const newName = 1;\nconsole.log(newName);\n"
     );
+    let applied_again = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id: plan_id.clone(),
+                expected_workspace_revision: revision.clone(),
+            },
+        )
+        .unwrap_err();
+    assert_eq!(applied_again.code, "AE_NOT_FOUND");
 
     let (discard_plan_id, _) = runtime
         .seed_plan_for_test(
@@ -410,6 +420,25 @@ fn apply_plan_updates_files_and_discard_marks_plan() {
         .unwrap();
     assert!(discarded.discarded);
     assert_eq!(discarded.plan_id, discard_plan_id);
+    let discarded_again = runtime
+        .discard_plan(
+            &view,
+            DiscardPlanInput {
+                plan_id: discard_plan_id.clone(),
+            },
+        )
+        .unwrap();
+    assert!(!discarded_again.discarded);
+    let discarded_apply = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id: discard_plan_id,
+                expected_workspace_revision: apply.new_revision,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(discarded_apply.code, "AE_NOT_FOUND");
 }
 
 #[test]
@@ -495,6 +524,95 @@ fn apply_plan_cleans_up_staged_multifile_artifacts() {
         .filter(|name| name.contains(".spiki-tmp-") || name.contains(".spiki-bak-"))
         .collect::<Vec<_>>();
     assert!(leftover_artifacts.is_empty(), "{leftover_artifacts:?}");
+}
+
+#[test]
+fn expired_plans_are_swept_on_subsequent_plan_activity() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("sample.ts");
+    fs::write(&file_path, "const oldName = 1;\nconsole.log(oldName);\n").unwrap();
+
+    let runtime = Runtime::new(RuntimeConfig {
+        plan_ttl: std::time::Duration::from_millis(10),
+        ..Default::default()
+    });
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let expired = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: None,
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 6,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 13,
+                            },
+                        },
+                        new_text: String::from("newName"),
+                    }],
+                }],
+            },
+        )
+        .unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    let fresh = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: None,
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 1,
+                                character: 12,
+                            },
+                            end: Position {
+                                line: 1,
+                                character: 19,
+                            },
+                        },
+                        new_text: String::from("newName"),
+                    }],
+                }],
+            },
+        )
+        .unwrap();
+
+    let expired_error = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id: expired.plan_id,
+                expected_workspace_revision: expired.workspace_revision,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(expired_error.code, "AE_NOT_FOUND");
+
+    let apply = runtime
+        .apply_plan(
+            &view,
+            ApplyPlanInput {
+                plan_id: fresh.plan_id,
+                expected_workspace_revision: fresh.workspace_revision,
+            },
+        )
+        .unwrap();
+    assert!(apply.applied);
 }
 
 #[test]
