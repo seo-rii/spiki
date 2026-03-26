@@ -31,3 +31,7 @@ jobs:
 
       - name: Run launcher smoke test
         run: node --test ./tests/program-exec.test.mjs
+
+      - name: Verify Windows named-pipe ACL
+        shell: pwsh
+        run: ./tests/windows-pipe-acl.ps1
