@@ -185,6 +185,58 @@ fn search_text_marks_truncated_when_max_files_limits_search() {
 
     assert_eq!(output.matches.len(), 0);
     assert!(output.truncated);
+    assert_eq!(output.coverage.files_indexed, Some(1));
+    assert_eq!(output.coverage.files_total_estimate, Some(2));
+    assert!(output.coverage.partial);
+}
+
+#[test]
+fn search_text_coverage_tracks_actual_scoped_candidates() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("src")).unwrap();
+    fs::create_dir_all(temp.path().join("tests")).unwrap();
+    fs::write(
+        temp.path().join("src").join("app.ts"),
+        "const needle = 1;\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("tests").join("spec.ts"),
+        "const needle = 2;\n",
+    )
+    .unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let output = runtime
+        .search_text(
+            &view,
+            SearchTextInput {
+                query: String::from("needle"),
+                mode: None,
+                case_sensitive: None,
+                scope: Some(Scope {
+                    uris: Some(vec![file_uri_from_path(&temp.path().join("src"))]),
+                    include_ignored: None,
+                    include_generated: None,
+                    include_default_excluded: None,
+                    exclude_globs: None,
+                    max_files: None,
+                }),
+                context_lines: Some(0),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(output.matches.len(), 1);
+    assert!(output.matches[0].uri.ends_with("/src/app.ts"));
+    assert_eq!(output.coverage.files_indexed, Some(1));
+    assert_eq!(output.coverage.files_total_estimate, Some(1));
+    assert!(!output.coverage.partial);
 }
 
 #[test]

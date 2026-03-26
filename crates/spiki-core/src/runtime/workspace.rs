@@ -1,9 +1,9 @@
 use globset::{Glob, GlobSetBuilder};
 
 use crate::model::{
-    ExecutionError, ReadSpansInput, ReadSpansOutput, SearchTextInput, SearchTextOutput,
-    SemanticEnsureInput, SemanticEnsureOutput, SemanticStatusOutput, Warning,
-    WorkspaceStatusInput, WorkspaceStatusOutput,
+    Coverage, ExecutionError, ReadSpansInput, ReadSpansOutput, SearchTextInput, SearchTextOutput,
+    SemanticEnsureInput, SemanticEnsureOutput, SemanticStatusOutput, Warning, WorkspaceStatusInput,
+    WorkspaceStatusOutput,
 };
 use crate::text::{
     build_text_span, ensure_path_in_roots, file_uri_from_path, path_from_file_uri, read_text_file,
@@ -69,7 +69,7 @@ impl Runtime {
         view: &ViewContext,
         input: SearchTextInput,
     ) -> SpikiResult<SearchTextOutput> {
-        let coverage = self.refresh_workspace(view, None)?;
+        self.refresh_workspace(view, None)?;
         let mut warnings = Vec::new();
         let mut matches = Vec::new();
         let scope = input.scope.clone();
@@ -177,9 +177,17 @@ impl Runtime {
             .as_ref()
             .and_then(|value| value.max_files)
             .unwrap_or(usize::MAX);
-        let mut truncated = scan.files.len() > max_files;
+        let total_files = scan.files.len();
+        let mut files_searched = 0usize;
+        let mut truncated = total_files > max_files;
 
         for path in scan.files.into_iter().take(max_files) {
+            let remaining = limit.saturating_sub(matches.len());
+            if remaining == 0 {
+                truncated = true;
+                break;
+            }
+            files_searched += 1;
             let file = match read_text_file(&path) {
                 Ok(value) => value,
                 Err(error) if error.code == "AE_UNSUPPORTED" => {
@@ -193,11 +201,6 @@ impl Runtime {
                 Err(error) => return Err(error),
             };
             let uri = file_uri_from_path(&path);
-            let remaining = limit.saturating_sub(matches.len());
-            if remaining == 0 {
-                truncated = true;
-                break;
-            }
             let mut file_matches = search_file(
                 &path,
                 &uri,
@@ -223,7 +226,11 @@ impl Runtime {
             engine: String::from("text"),
             matches,
             truncated,
-            coverage,
+            coverage: Coverage {
+                partial: files_searched < total_files,
+                files_indexed: Some(files_searched as u64),
+                files_total_estimate: Some(total_files as u64),
+            },
             warnings,
         })
     }
