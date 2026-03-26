@@ -1341,7 +1341,11 @@ semantic backend가 준비되어 있으면 rename preview 후 in-memory validati
       "additionalProperties": false,
       "properties": {
         "line": { "type": "integer", "minimum": 0 },
-        "character": { "type": "integer", "minimum": 0 }
+        "character": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-based Unicode scalar index within the line. Phase 1 does not use UTF-16 code units or grapheme cluster indexing."
+        }
       },
       "required": ["line", "character"]
     },
