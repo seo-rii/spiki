@@ -87,8 +87,6 @@ async fn handle_request(session: &Arc<Session>, method: &str, params: Value) -> 
             "bootstrapVersion": SPIKI_BOOTSTRAP_VERSION
         })),
         "shutdown" => Ok(Value::Null),
-        "resources/list" => Ok(json!({ "resources": [] })),
-        "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
         "tools/list" => Ok(json!({ "tools": tool_specs() })),
         "tools/call" => handle_tool_call(session, params).await,
         other => Err(anyhow!("method not found: {other}")),
@@ -121,8 +119,7 @@ async fn handle_initialize(session: &Arc<Session>, params: Value) -> Result<Valu
     Ok(json!({
         "protocolVersion": protocol_version,
         "capabilities": {
-            "tools": { "listChanged": false },
-            "roots": { "listChanged": true }
+            "tools": { "listChanged": false }
         },
         "serverInfo": {
             "name": SPIKI_SERVER_NAME,
@@ -228,14 +225,22 @@ fn send_response(session: &Session, id: Value, result: Value) -> Result<()> {
 }
 
 fn send_protocol_error(session: &Session, id: Value, error: anyhow::Error) -> Result<()> {
+    let message = error.to_string();
+    let code = if message.starts_with("method not found:") {
+        -32601
+    } else if message == "request missing method" {
+        -32600
+    } else {
+        -32603
+    };
     session
         .writer
         .send(json!({
             "jsonrpc": "2.0",
             "id": id,
             "error": {
-                "code": -32603,
-                "message": error.to_string()
+                "code": code,
+                "message": message
             }
         }))
         .map_err(|_| anyhow!("failed to queue error response"))

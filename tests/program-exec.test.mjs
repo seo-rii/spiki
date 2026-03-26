@@ -464,6 +464,11 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
 
   const initialize = await client.initialize();
   assert.equal(initialize.serverInfo.name, "spiki");
+  assert.deepEqual(initialize.capabilities, {
+    tools: {
+      listChanged: false
+    }
+  });
   if (process.platform !== "win32") {
     const runtimeDirStat = await stat(context.runtimeDir);
     const pidFileStat = await stat(path.join(context.runtimeDir, "daemon.pid"));
@@ -479,6 +484,8 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   const runningStatusJson = JSON.parse(runningStatusAfterInit.stdout);
   assert.equal(runningStatusJson.reachable, true);
   assert.equal(runningStatusJson.compatible, true);
+  await assert.rejects(client.request("resources/list"), /method not found: resources\/list/);
+  await assert.rejects(client.request("resources/templates/list"), /method not found: resources\/templates\/list/);
 
   const tools = await client.request("tools/list");
   const toolNames = tools.tools.map((tool) => tool.name).sort();
