@@ -10,6 +10,11 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use crate::protocol::id_to_string;
 use crate::tools::{handle_tool_call, tool_specs};
 
+const SPIKI_SERVER_NAME: &str = "spiki";
+const SPIKI_SERVER_VERSION: &str = "0.1.0-dev";
+const SPIKI_PROTOCOL_VERSION: &str = "2025-11-25";
+const SPIKI_BOOTSTRAP_VERSION: u32 = 1;
+
 pub(crate) struct Session {
     pub(crate) client_session_id: String,
     pub(crate) runtime: Runtime,
@@ -73,6 +78,14 @@ async fn handle_request(session: &Arc<Session>, method: &str, params: Value) -> 
     match method {
         "initialize" => handle_initialize(session, params).await,
         "ping" => Ok(json!({})),
+        "spiki/bootstrap_status" => Ok(json!({
+            "serverInfo": {
+                "name": SPIKI_SERVER_NAME,
+                "version": SPIKI_SERVER_VERSION
+            },
+            "protocolVersion": SPIKI_PROTOCOL_VERSION,
+            "bootstrapVersion": SPIKI_BOOTSTRAP_VERSION
+        })),
         "shutdown" => Ok(Value::Null),
         "resources/list" => Ok(json!({ "resources": [] })),
         "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
@@ -112,8 +125,8 @@ async fn handle_initialize(session: &Arc<Session>, params: Value) -> Result<Valu
             "roots": { "listChanged": true }
         },
         "serverInfo": {
-            "name": "spiki",
-            "version": "0.1.0-dev"
+            "name": SPIKI_SERVER_NAME,
+            "version": SPIKI_SERVER_VERSION
         },
         "instructions": "spiki Phase 1 exposes text-first workspace tools and safe apply skeletons."
     }))

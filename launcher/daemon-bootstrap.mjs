@@ -5,6 +5,11 @@ import path from "node:path";
 
 import { getProjectRoot, getRuntimeDir, getSocketPath, resolveDaemonBinary } from "./runtime-paths.mjs";
 
+const SPIKI_SERVER_NAME = "spiki";
+const SPIKI_SERVER_VERSION = "0.1.0-dev";
+const SPIKI_PROTOCOL_VERSION = "2025-11-25";
+const SPIKI_BOOTSTRAP_VERSION = 1;
+
 async function ensureRuntimeDir(runtimeDir) {
   await fs.mkdir(runtimeDir, { recursive: true, mode: 0o700 });
   const runtimeStat = await fs.lstat(runtimeDir);
@@ -46,14 +51,192 @@ export function connectSocket(socketPath, timeoutMs = 250) {
   });
 }
 
-async function isDaemonReachable(socketPath, timeoutMs = 250) {
+async function probeDaemonStatus(socketPath, timeoutMs = 250) {
+  let socket;
   try {
-    const socket = await connectSocket(socketPath, timeoutMs);
-    socket.destroy();
-    return true;
-  } catch {
-    return false;
+    socket = await connectSocket(socketPath, timeoutMs);
+  } catch (error) {
+    return {
+      reachable: false,
+      compatible: false,
+      reason: error instanceof Error ? error.message : String(error),
+      serverInfo: null,
+      protocolVersion: null,
+      bootstrapVersion: null
+    };
   }
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    let buffer = Buffer.alloc(0);
+    const requestPayload = Buffer.from(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "bootstrap",
+        method: "spiki/bootstrap_status",
+        params: {}
+      }),
+      "utf8"
+    );
+
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      finish({
+        reachable: true,
+        compatible: false,
+        reason: "Timed out waiting for bootstrap status",
+        serverInfo: null,
+        protocolVersion: null,
+        bootstrapVersion: null
+      });
+    }, timeoutMs);
+
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (true) {
+        const headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd === -1) {
+          return;
+        }
+
+        const header = buffer.subarray(0, headerEnd).toString("utf8");
+        const contentLengthLine = header
+          .split(/\r?\n/u)
+          .find((line) => line.toLowerCase().startsWith("content-length:"));
+        if (!contentLengthLine) {
+          finish({
+            reachable: true,
+            compatible: false,
+            reason: `Invalid bootstrap response header: ${header}`,
+            serverInfo: null,
+            protocolVersion: null,
+            bootstrapVersion: null
+          });
+          return;
+        }
+
+        const length = Number(contentLengthLine.split(":")[1].trim());
+        if (!Number.isInteger(length) || length < 0) {
+          finish({
+            reachable: true,
+            compatible: false,
+            reason: `Invalid bootstrap response length: ${contentLengthLine}`,
+            serverInfo: null,
+            protocolVersion: null,
+            bootstrapVersion: null
+          });
+          return;
+        }
+
+        const bodyStart = headerEnd + 4;
+        if (buffer.length < bodyStart + length) {
+          return;
+        }
+
+        const payload = buffer.subarray(bodyStart, bodyStart + length);
+        buffer = buffer.subarray(bodyStart + length);
+
+        let message;
+        try {
+          message = JSON.parse(payload.toString("utf8"));
+        } catch (error) {
+          finish({
+            reachable: true,
+            compatible: false,
+            reason: error instanceof Error ? error.message : String(error),
+            serverInfo: null,
+            protocolVersion: null,
+            bootstrapVersion: null
+          });
+          return;
+        }
+
+        if (!message || typeof message !== "object") {
+          finish({
+            reachable: true,
+            compatible: false,
+            reason: "Bootstrap status returned a non-object payload",
+            serverInfo: null,
+            protocolVersion: null,
+            bootstrapVersion: null
+          });
+          return;
+        }
+
+        if (message.error) {
+          finish({
+            reachable: true,
+            compatible: false,
+            reason: message.error.message ?? "Bootstrap status returned an error",
+            serverInfo: null,
+            protocolVersion: null,
+            bootstrapVersion: null
+          });
+          return;
+        }
+
+        const result = message.result ?? null;
+        const serverInfo =
+          result && typeof result === "object" && !Array.isArray(result) ? result.serverInfo ?? null : null;
+        const protocolVersion =
+          result && typeof result === "object" && !Array.isArray(result) ? result.protocolVersion ?? null : null;
+        const bootstrapVersion =
+          result && typeof result === "object" && !Array.isArray(result) ? result.bootstrapVersion ?? null : null;
+        const compatible =
+          serverInfo &&
+          serverInfo.name === SPIKI_SERVER_NAME &&
+          serverInfo.version === SPIKI_SERVER_VERSION &&
+          protocolVersion === SPIKI_PROTOCOL_VERSION &&
+          bootstrapVersion === SPIKI_BOOTSTRAP_VERSION;
+
+        finish({
+          reachable: true,
+          compatible,
+          reason: compatible ? null : "Daemon bootstrap metadata does not match the current launcher",
+          serverInfo,
+          protocolVersion,
+          bootstrapVersion
+        });
+        return;
+      }
+    });
+
+    socket.once("close", () => {
+      finish({
+        reachable: true,
+        compatible: false,
+        reason: "Daemon closed the bootstrap probe connection early",
+        serverInfo: null,
+        protocolVersion: null,
+        bootstrapVersion: null
+      });
+    });
+
+    socket.once("error", (error) => {
+      finish({
+        reachable: true,
+        compatible: false,
+        reason: error instanceof Error ? error.message : String(error),
+        serverInfo: null,
+        protocolVersion: null,
+        bootstrapVersion: null
+      });
+    });
+
+    socket.write(`Content-Length: ${requestPayload.length}\r\n\r\n`);
+    socket.write(requestPayload);
+  });
 }
 
 function isProcessAlive(pid) {
@@ -106,14 +289,32 @@ async function cleanupStaleRuntime(runtimeDir, socketPath) {
 
 async function waitForDaemon(socketPath, timeoutMs = 5000) {
   const startedAt = Date.now();
+  let lastStatus = null;
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isDaemonReachable(socketPath, 250)) {
+    lastStatus = await probeDaemonStatus(socketPath, 250);
+    if (lastStatus.compatible) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
+  if (lastStatus?.reachable && !lastStatus.compatible) {
+    throw new Error(`Timed out waiting for a compatible spiki daemon: ${lastStatus.reason}`);
+  }
+
   throw new Error("Timed out waiting for spiki daemon readiness");
+}
+
+async function waitForProcessExit(pid, timeoutMs = 3000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!isProcessAlive(pid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return !isProcessAlive(pid);
 }
 
 export async function ensureDaemonRunning() {
@@ -124,7 +325,8 @@ export async function ensureDaemonRunning() {
 
   await ensureRuntimeDir(runtimeDir);
 
-  if (await isDaemonReachable(socketPath, 250)) {
+  const initialProbe = await probeDaemonStatus(socketPath, 250);
+  if (initialProbe.compatible) {
     return { projectRoot, runtimeDir, socketPath, daemonBin };
   }
 
@@ -170,12 +372,33 @@ export async function ensureDaemonRunning() {
       })
     );
 
-    if (await isDaemonReachable(socketPath, 250)) {
+    let probe = await probeDaemonStatus(socketPath, 250);
+    if (probe.compatible) {
       return { projectRoot, runtimeDir, socketPath, daemonBin };
+    }
+    if (probe.reachable) {
+      const incompatiblePid = await readPid(runtimeDir);
+      if (!incompatiblePid || !isProcessAlive(incompatiblePid)) {
+        throw new Error(`Found an incompatible spiki daemon at ${socketPath} but could not resolve a live pid`);
+      }
+
+      process.kill(incompatiblePid, "SIGTERM");
+      if (!(await waitForProcessExit(incompatiblePid, 3000))) {
+        throw new Error(`Timed out stopping incompatible spiki daemon pid ${incompatiblePid}`);
+      }
+      await cleanupStaleRuntime(runtimeDir, socketPath);
+      probe = await probeDaemonStatus(socketPath, 250);
+      if (probe.compatible) {
+        return { projectRoot, runtimeDir, socketPath, daemonBin };
+      }
+      if (probe.reachable) {
+        throw new Error(`Incompatible spiki daemon remained reachable at ${socketPath} after restart`);
+      }
     }
 
     await cleanupStaleRuntime(runtimeDir, socketPath);
-    if (await isDaemonReachable(socketPath, 250)) {
+    probe = await probeDaemonStatus(socketPath, 250);
+    if (probe.compatible) {
       return { projectRoot, runtimeDir, socketPath, daemonBin };
     }
 
@@ -183,7 +406,8 @@ export async function ensureDaemonRunning() {
     if (livePid && isProcessAlive(livePid)) {
       const liveDaemonDeadline = Date.now() + 2000;
       while (Date.now() < liveDaemonDeadline) {
-        if (await isDaemonReachable(socketPath, 250)) {
+        probe = await probeDaemonStatus(socketPath, 250);
+        if (probe.compatible) {
           return { projectRoot, runtimeDir, socketPath, daemonBin };
         }
 
@@ -201,7 +425,8 @@ export async function ensureDaemonRunning() {
       }
 
       await cleanupStaleRuntime(runtimeDir, socketPath);
-      if (await isDaemonReachable(socketPath, 250)) {
+      probe = await probeDaemonStatus(socketPath, 250);
+      if (probe.compatible) {
         return { projectRoot, runtimeDir, socketPath, daemonBin };
       }
     }
@@ -235,14 +460,18 @@ export async function daemonStatus() {
   const socketPath = getSocketPath(runtimeDir);
   const daemonBin = resolveDaemonBinary(getProjectRoot());
   const pid = await readPid(runtimeDir);
-  const reachable = await isDaemonReachable(socketPath, 250);
+  const probe = await probeDaemonStatus(socketPath, 250);
 
   return {
     runtimeDir,
     socketPath,
     daemonBin,
     pid,
-    reachable
+    reachable: probe.reachable,
+    compatible: probe.compatible,
+    serverInfo: probe.serverInfo,
+    protocolVersion: probe.protocolVersion,
+    bootstrapVersion: probe.bootstrapVersion
   };
 }
 
@@ -257,15 +486,7 @@ export async function stopDaemon() {
   }
 
   process.kill(pid, "SIGTERM");
-  let stopped = false;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 3000) {
-    if (!isProcessAlive(pid)) {
-      stopped = true;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  let stopped = await waitForProcessExit(pid, 3000);
 
   if (!stopped && isProcessAlive(pid)) {
     process.kill(pid, "SIGKILL");

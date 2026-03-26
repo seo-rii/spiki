@@ -444,6 +444,15 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
     assert.equal(pidFileStat.mode & 0o777, 0o600);
   }
 
+  const runningStatusAfterInit = await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "status"], {
+    cwd: projectRoot,
+    env: context.env
+  });
+  assert.equal(runningStatusAfterInit.code, 0, runningStatusAfterInit.stderr);
+  const runningStatusJson = JSON.parse(runningStatusAfterInit.stdout);
+  assert.equal(runningStatusJson.reachable, true);
+  assert.equal(runningStatusJson.compatible, true);
+
   const tools = await client.request("tools/list");
   const toolNames = tools.tools.map((tool) => tool.name).sort();
   assert.deepEqual(toolNames, [

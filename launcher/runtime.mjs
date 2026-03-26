@@ -10,7 +10,8 @@ export async function runDoctor() {
     `socketPath: ${status.socketPath}`,
     `daemonBin: ${status.daemonBin}`,
     `pid: ${status.pid ?? "missing"}`,
-    `reachable: ${status.reachable}`
+    `reachable: ${status.reachable}`,
+    `compatible: ${status.compatible}`
   ];
 
   process.stdout.write(`${lines.join("\n")}\n`);
