@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -15,6 +17,24 @@ use crate::text::{
 
 use super::error::{spiki_error, SpikiCode, SpikiResult};
 use super::state::{PlanState, Runtime, StoredPlan, ViewContext, WorkspaceMeta};
+
+#[cfg(test)]
+thread_local! {
+    static APPLY_PLAN_BEFORE_COMMIT_HOOK: RefCell<Option<Box<dyn FnMut()>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn run_apply_plan_before_commit_hook_for_test() {
+    APPLY_PLAN_BEFORE_COMMIT_HOOK.with(|slot| {
+        if let Some(mut hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn run_apply_plan_before_commit_hook_for_test() {}
 
 impl Runtime {
     fn sweep_terminal_plans(meta: &mut WorkspaceMeta) {
@@ -241,6 +261,35 @@ impl Runtime {
             staged_files.push((path.clone(), temp_path, backup_path));
         }
 
+        run_apply_plan_before_commit_hook_for_test();
+
+        for file_edit in &plan.file_edits {
+            let path = path_from_file_uri(&file_edit.uri)?;
+            let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
+            let loaded = match read_text_file(&canonical) {
+                Ok(value) => value,
+                Err(error) => {
+                    for (_, staged_temp, _) in &staged_files {
+                        let _ = fs::remove_file(staged_temp);
+                    }
+                    return Err(error);
+                }
+            };
+            if let Some(expected) = &file_edit.fingerprint {
+                let actual = fingerprint_for_file(&canonical, &loaded);
+                if &actual != expected {
+                    for (_, staged_temp, _) in &staged_files {
+                        let _ = fs::remove_file(staged_temp);
+                    }
+                    meta.plans.remove(&input.plan_id);
+                    return Err(spiki_error(
+                        SpikiCode::StalePlan,
+                        format!("Fingerprint mismatch for {} before commit", file_edit.uri),
+                    ));
+                }
+            }
+        }
+
         let mut backed_up = Vec::new();
         for (path, _, backup_path) in &staged_files {
             if let Err(error) = fs::rename(path, backup_path) {
@@ -388,5 +437,104 @@ impl Runtime {
             },
         );
         plan_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use crate::model::{ApplyPlanInput, FileEdit, Position, Range, TextEdit};
+    use crate::runtime::Runtime;
+    use crate::text::{file_uri_from_path, fingerprint_for_file, read_text_file};
+
+    use super::APPLY_PLAN_BEFORE_COMMIT_HOOK;
+
+    #[test]
+    fn apply_plan_revalidates_live_files_before_commit() {
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("sample.ts");
+        fs::write(&file_path, "const oldName = 1;\nconsole.log(oldName);\n").unwrap();
+
+        let runtime = Runtime::new(Default::default());
+        let view = runtime
+            .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+            .unwrap();
+
+        let loaded = read_text_file(&file_path).unwrap();
+        let fingerprint = fingerprint_for_file(&file_path, &loaded);
+        let (plan_id, revision) = runtime
+            .seed_plan_for_test(
+                &view,
+                vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: Some(fingerprint),
+                    edits: vec![
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 6,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 13,
+                                },
+                            },
+                            new_text: String::from("newName"),
+                        },
+                        TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 1,
+                                    character: 12,
+                                },
+                                end: Position {
+                                    line: 1,
+                                    character: 19,
+                                },
+                            },
+                            new_text: String::from("newName"),
+                        },
+                    ],
+                }],
+            )
+            .unwrap();
+
+        let external_contents = String::from("const external = 1;\nconsole.log(external);\n");
+        APPLY_PLAN_BEFORE_COMMIT_HOOK.with(|slot| {
+            let file_path = file_path.clone();
+            let external_contents = external_contents.clone();
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::write(&file_path, &external_contents).unwrap();
+            }));
+        });
+
+        let error = runtime
+            .apply_plan(
+                &view,
+                ApplyPlanInput {
+                    plan_id: plan_id.clone(),
+                    expected_workspace_revision: revision.clone(),
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "AE_STALE_PLAN");
+        assert!(error.message.contains("before commit"));
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), external_contents);
+
+        let missing = runtime
+            .apply_plan(
+                &view,
+                ApplyPlanInput {
+                    plan_id,
+                    expected_workspace_revision: revision,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(missing.code, "AE_NOT_FOUND");
     }
 }
