@@ -48,7 +48,10 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
     if std::path::Path::new(&socket_path).exists() {
         let _ = std::fs::remove_file(&socket_path);
     }
-    std::fs::write(runtime_dir.join("daemon.pid"), std::process::id().to_string())?;
+    std::fs::write(
+        runtime_dir.join("daemon.pid"),
+        std::process::id().to_string(),
+    )?;
     #[cfg(unix)]
     std::fs::set_permissions(
         runtime_dir.join("daemon.pid"),
@@ -89,13 +92,51 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
     #[cfg(unix)]
     std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
     #[cfg(windows)]
-    let mut listener = {
-        use tokio::net::windows::named_pipe::ServerOptions;
+    let (mut listener, mut security_attributes, security_descriptor) = {
+        use std::ffi::c_void;
 
+        use tokio::net::windows::named_pipe::ServerOptions;
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{LocalFree, HLOCAL};
+        use windows::Win32::Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION,
+        };
+        use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+
+        let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
+        let security_descriptor_sddl: Vec<u16> =
+            "D:P(A;;GA;;;SY)(A;;GA;;;OW)\0".encode_utf16().collect();
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(security_descriptor_sddl.as_ptr()),
+                SDDL_REVISION,
+                &mut security_descriptor,
+                None,
+            )
+        }
+        .map_err(|error| anyhow!("failed to build Windows named pipe ACL: {error}"))?;
+
+        let mut security_attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: security_descriptor.0,
+            bInheritHandle: false.into(),
+        };
         let mut options = ServerOptions::new();
         options.first_pipe_instance(true);
         options.reject_remote_clients(true);
-        options.create(&socket_path)?
+        let listener = unsafe {
+            options.create_with_security_attributes_raw(
+                &socket_path,
+                &mut security_attributes as *mut _ as *mut c_void,
+            )
+        }
+        .map_err(|error| {
+            unsafe {
+                let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
+            }
+            anyhow!("failed to create Windows named pipe listener: {error}")
+        })?;
+        (listener, security_attributes, security_descriptor)
     };
 
     #[cfg(unix)]
@@ -126,11 +167,18 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
                 accept?;
                 let connected = listener;
                 {
+                    use std::ffi::c_void;
+
                     use tokio::net::windows::named_pipe::ServerOptions;
 
                     let mut options = ServerOptions::new();
                     options.reject_remote_clients(true);
-                    listener = options.create(&socket_path)?;
+                    listener = unsafe {
+                        options.create_with_security_attributes_raw(
+                            &socket_path,
+                            &mut security_attributes as *mut _ as *mut c_void,
+                        )
+                    }?;
                 }
                 let session_runtime = runtime.clone();
                 let session_shutdown = shutdown_tx.subscribe();
@@ -149,6 +197,14 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
     signal_task.abort();
     #[cfg(unix)]
     let _ = tokio::fs::remove_file(&socket_path).await;
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{LocalFree, HLOCAL};
+
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
+        }
+    }
     let _ = tokio::fs::remove_file(runtime_dir.join("daemon.pid")).await;
     Ok(())
 }
