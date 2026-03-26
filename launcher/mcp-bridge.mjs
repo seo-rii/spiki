@@ -3,6 +3,32 @@ import { pathToFileURL } from "node:url";
 
 import { connectSocket, ensureDaemonRunning } from "./daemon-bootstrap.mjs";
 
+const MAX_BRIDGE_FRAME_BYTES = 1024 * 1024;
+
+function ensureBufferedPayloadWithinLimit(bufferLength, source) {
+  if (bufferLength > MAX_BRIDGE_FRAME_BYTES) {
+    throw new Error(`${source} buffer exceeded ${MAX_BRIDGE_FRAME_BYTES} bytes`);
+  }
+}
+
+function parseBoundedContentLength(header, source) {
+  const contentLengthLine = header
+    .split(/\r?\n/u)
+    .find((line) => line.toLowerCase().startsWith("content-length:"));
+  if (!contentLengthLine) {
+    throw new Error(`Missing Content-Length header from ${source}: ${header}`);
+  }
+
+  const length = Number(contentLengthLine.split(":")[1].trim());
+  if (!Number.isInteger(length) || length < 0) {
+    throw new Error(`Invalid Content-Length header from ${source}: ${contentLengthLine}`);
+  }
+  if (length > MAX_BRIDGE_FRAME_BYTES) {
+    throw new Error(`${source} frame exceeds ${MAX_BRIDGE_FRAME_BYTES} bytes`);
+  }
+  return length;
+}
+
 export async function bridgeStdio() {
   const { socketPath } = await ensureDaemonRunning();
   const socket = await connectSocket(socketPath, 1000);
@@ -45,6 +71,7 @@ export async function bridgeStdio() {
   process.stdin.on("data", (chunk) => {
     try {
       stdinBuffer = Buffer.concat([stdinBuffer, chunk]);
+      ensureBufferedPayloadWithinLimit(stdinBuffer.length, "client");
 
       while (stdinBuffer.length > 0) {
         if (!clientMode) {
@@ -65,15 +92,7 @@ export async function bridgeStdio() {
           }
 
           const header = stdinBuffer.subarray(0, headerEnd).toString("utf8");
-          const contentLengthLine = header
-            .split(/\r?\n/u)
-            .find((line) => line.toLowerCase().startsWith("content-length:"));
-          if (!contentLengthLine) {
-            finish(new Error(`Missing Content-Length header: ${header}`));
-            return;
-          }
-
-          const length = Number(contentLengthLine.split(":")[1].trim());
+          const length = parseBoundedContentLength(header, "client");
           const bodyStart = headerEnd + 4;
           if (stdinBuffer.length < bodyStart + length) {
             return;
@@ -122,6 +141,10 @@ export async function bridgeStdio() {
           }
 
           const forwardPayload = Buffer.from(JSON.stringify(message), "utf8");
+          if (forwardPayload.length > MAX_BRIDGE_FRAME_BYTES) {
+            finish(new Error(`client frame exceeds ${MAX_BRIDGE_FRAME_BYTES} bytes`));
+            return;
+          }
           socket.write(`Content-Length: ${forwardPayload.length}\r\n\r\n`);
           socket.write(forwardPayload);
           continue;
@@ -129,6 +152,7 @@ export async function bridgeStdio() {
 
         const newlineIndex = stdinBuffer.indexOf("\n");
         if (newlineIndex === -1) {
+          ensureBufferedPayloadWithinLimit(stdinBuffer.length, "client");
           return;
         }
 
@@ -177,6 +201,10 @@ export async function bridgeStdio() {
         }
 
         const outgoingPayload = Buffer.from(JSON.stringify(message), "utf8");
+        if (outgoingPayload.length > MAX_BRIDGE_FRAME_BYTES) {
+          finish(new Error(`client frame exceeds ${MAX_BRIDGE_FRAME_BYTES} bytes`));
+          return;
+        }
         socket.write(`Content-Length: ${outgoingPayload.length}\r\n\r\n`);
         socket.write(outgoingPayload);
       }
@@ -187,6 +215,7 @@ export async function bridgeStdio() {
   socket.on("data", (chunk) => {
     try {
       socketBuffer = Buffer.concat([socketBuffer, chunk]);
+      ensureBufferedPayloadWithinLimit(socketBuffer.length, "daemon");
 
       while (true) {
         const headerEnd = socketBuffer.indexOf("\r\n\r\n");
@@ -195,15 +224,7 @@ export async function bridgeStdio() {
         }
 
         const header = socketBuffer.subarray(0, headerEnd).toString("utf8");
-        const contentLengthLine = header
-          .split(/\r?\n/u)
-          .find((line) => line.toLowerCase().startsWith("content-length:"));
-        if (!contentLengthLine) {
-          finish(new Error(`Missing Content-Length header from daemon: ${header}`));
-          return;
-        }
-
-        const length = Number(contentLengthLine.split(":")[1].trim());
+        const length = parseBoundedContentLength(header, "daemon");
         const bodyStart = headerEnd + 4;
         if (socketBuffer.length < bodyStart + length) {
           return;
