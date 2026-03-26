@@ -1,5 +1,5 @@
 {
-  "name": "@seo-rii/spiki",
+  "name": "spiki",
   "version": "0.1.0-dev",
   "description": "Editor-oriented MCP reference implementation for stable agent workspace operations",
   "license": "MIT",

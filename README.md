@@ -60,7 +60,7 @@ Use `scope.includeDefaultExcluded=true` for one search, or set `SPIKI_DEFAULT_EX
 
 ### Intended npm surface
 
-The launcher package is prepared to publish as `@seo-rii/spiki`.
+The launcher package is prepared to publish as `spiki`.
 Until an npm release is actually published, use the repository checkout or `npm pack` output from this repository.
 
 ## Documentation

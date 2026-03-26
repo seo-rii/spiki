@@ -9,7 +9,7 @@ test("package metadata is publish-ready", { timeout: 30000 }, async () => {
   const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
 
   assert.notEqual(packageJson.private, true);
-  assert.equal(packageJson.name, "@seo-rii/spiki");
+  assert.equal(packageJson.name, "spiki");
   assert.equal(packageJson.bin.spiki, "./bin/spiki.js");
   assert.ok(packageJson.description);
   assert.ok(packageJson.license);
