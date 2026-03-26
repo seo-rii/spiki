@@ -163,7 +163,11 @@ impl Runtime {
                         .and_then(|value| value.include_default_excluded)
                         .unwrap_or(false),
                     max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
-                    default_exclude_components: self.state.config.default_exclude_components.clone(),
+                    default_exclude_components: self
+                        .state
+                        .config
+                        .default_exclude_components
+                        .clone(),
                     forced_exclude_components: self.state.config.forced_exclude_components.clone(),
                 },
             )?
