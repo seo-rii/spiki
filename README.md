@@ -53,6 +53,7 @@ node ./bin/spiki.js
 ```
 
 The launcher is the public entrypoint. It will start or reuse the per-user daemon automatically.
+By default, runtime state lives under the current user's local cache/runtime directory and can be overridden with `AGENT_EDITOR_RUNTIME_DIR` or `SPIKI_RUNTIME_DIR`.
 Clients are expected to provide MCP roots during `initialize`.
 If you need to support a roots-less client, opt in explicitly with `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1` and run the launcher from the workspace directory you want to expose.
 Default exclude components such as `dist`, `target`, or `coverage` are configurable defaults, not forced hides.

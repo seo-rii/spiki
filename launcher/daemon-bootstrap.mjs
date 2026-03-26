@@ -6,7 +6,14 @@ import path from "node:path";
 import { getProjectRoot, getRuntimeDir, getSocketPath, resolveDaemonBinary } from "./runtime-paths.mjs";
 
 async function ensureRuntimeDir(runtimeDir) {
-  await fs.mkdir(runtimeDir, { recursive: true });
+  await fs.mkdir(runtimeDir, { recursive: true, mode: 0o700 });
+  const runtimeStat = await fs.lstat(runtimeDir);
+  if (!runtimeStat.isDirectory() || runtimeStat.isSymbolicLink()) {
+    throw new Error(`spiki runtime path is not a real directory: ${runtimeDir}`);
+  }
+  if (process.platform !== "win32") {
+    await fs.chmod(runtimeDir, 0o700);
+  }
 }
 
 async function removeIfExists(targetPath) {

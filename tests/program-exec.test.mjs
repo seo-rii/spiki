@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -437,6 +437,12 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
 
   const initialize = await client.initialize();
   assert.equal(initialize.serverInfo.name, "spiki");
+  if (process.platform !== "win32") {
+    const runtimeDirStat = await stat(context.runtimeDir);
+    const pidFileStat = await stat(path.join(context.runtimeDir, "daemon.pid"));
+    assert.equal(runtimeDirStat.mode & 0o777, 0o700);
+    assert.equal(pidFileStat.mode & 0o777, 0o600);
+  }
 
   const tools = await client.request("tools/list");
   const toolNames = tools.tools.map((tool) => tool.name).sort();

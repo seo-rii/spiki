@@ -7,11 +7,27 @@ export function getProjectRoot() {
 }
 
 export function getRuntimeDir() {
-  return (
-    process.env.AGENT_EDITOR_RUNTIME_DIR ??
-    process.env.SPIKI_RUNTIME_DIR ??
-    path.join(os.tmpdir(), `spiki-${process.getuid?.() ?? os.userInfo().username}`)
-  );
+  if (process.env.AGENT_EDITOR_RUNTIME_DIR) {
+    return process.env.AGENT_EDITOR_RUNTIME_DIR;
+  }
+
+  if (process.env.SPIKI_RUNTIME_DIR) {
+    return process.env.SPIKI_RUNTIME_DIR;
+  }
+
+  if (process.platform === "win32") {
+    return path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), "spiki");
+  }
+
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Caches", "spiki");
+  }
+
+  if (process.env.XDG_RUNTIME_DIR) {
+    return path.join(process.env.XDG_RUNTIME_DIR, "spiki");
+  }
+
+  return path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache"), "spiki");
 }
 
 export function getSocketPath(runtimeDir) {

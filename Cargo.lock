@@ -850,6 +850,7 @@ name = "spiki-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "schemars",
  "serde",
  "serde_json",

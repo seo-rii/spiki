@@ -4,6 +4,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use spiki_core::{Runtime, RuntimeConfig};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use tokio::io::{split, AsyncRead, AsyncWrite, BufReader};
 #[cfg(unix)]
 use tokio::net::UnixListener;
@@ -39,16 +41,19 @@ pub(crate) fn parse_args() -> Result<Args> {
 }
 
 pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()> {
-    tokio::fs::create_dir_all(&runtime_dir).await?;
+    std::fs::create_dir_all(&runtime_dir)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&runtime_dir, std::fs::Permissions::from_mode(0o700))?;
     #[cfg(unix)]
     if std::path::Path::new(&socket_path).exists() {
-        let _ = tokio::fs::remove_file(&socket_path).await;
+        let _ = std::fs::remove_file(&socket_path);
     }
-    tokio::fs::write(
+    std::fs::write(runtime_dir.join("daemon.pid"), std::process::id().to_string())?;
+    #[cfg(unix)]
+    std::fs::set_permissions(
         runtime_dir.join("daemon.pid"),
-        std::process::id().to_string(),
-    )
-    .await?;
+        std::fs::Permissions::from_mode(0o600),
+    )?;
     let mut runtime_config = RuntimeConfig::default();
     if let Ok(value) = std::env::var("SPIKI_DEFAULT_EXCLUDE_COMPONENTS") {
         runtime_config.default_exclude_components = value
@@ -73,7 +78,16 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
     info!("spiki-daemon listening on {}", socket_path.display());
 
     #[cfg(unix)]
-    let listener = UnixListener::bind(&socket_path)?;
+    let listener = {
+        let previous_umask = unsafe { libc::umask(0o177) };
+        let listener = UnixListener::bind(&socket_path);
+        unsafe {
+            libc::umask(previous_umask);
+        }
+        listener?
+    };
+    #[cfg(unix)]
+    std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
     #[cfg(windows)]
     let mut listener = {
         use tokio::net::windows::named_pipe::ServerOptions;
