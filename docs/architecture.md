@@ -20,6 +20,7 @@ The runtime transport is local-only:
 - Reuses an existing per-user daemon when possible
 - Uses a filesystem bootstrap lock before daemon spawn
 - Bridges client framing differences before forwarding requests
+- Prefers a packaged native daemon when one is available and treats local source builds as a development fallback
 - Provides small operational commands such as `doctor`, `daemon status`, and `daemon stop`
 
 ### Rust daemon

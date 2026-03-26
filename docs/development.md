@@ -15,6 +15,18 @@ This produces the local Rust daemon binary used by the launcher.
 
 On Unix-like hosts the launcher talks to the daemon over a Unix domain socket. On Windows it uses a named pipe.
 
+## Packaging and distribution
+
+Current repository checkouts are development-oriented. If the launcher cannot find a daemon binary in the local build output, it falls back to building `spiki-daemon` from source, which means local development still expects a Rust toolchain.
+
+The intended published distribution model is:
+
+- the npm package provides the public `spiki` launcher surface
+- platform-specific native daemon artifacts are resolved first at runtime
+- source builds remain a fallback for repository checkouts and unsupported targets, not the primary install path
+
+Until prebuilt daemon artifacts are wired into the release flow, `npm pack` output from this repository should be treated as a developer snapshot rather than a zero-toolchain end-user release.
+
 ## Common commands
 
 ### Start the MCP bridge
