@@ -313,7 +313,7 @@ test("spiki launcher refuses to spawn over a live unreachable daemon pid", { tim
   assert.equal(result.code, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 });
 
-test("spiki launcher rejects roots-less initialize by default", { timeout: 60000 }, async (t) => {
+test("spiki launcher rejects roots-less initialize by default", { timeout: 60000, concurrency: false }, async (t) => {
   const context = await createTestEnvironment({
     prefix: "spiki-rootless-reject-",
     files: {
@@ -352,7 +352,103 @@ test("spiki launcher rejects roots-less initialize by default", { timeout: 60000
   );
 });
 
-test("spiki launcher can allow roots-less initialize with explicit opt-in", { timeout: 60000 }, async (t) => {
+test("spiki launcher rejects initialize with an explicit empty root set", { timeout: 60000, concurrency: false }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-empty-roots-reject-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await assert.rejects(
+    client.request("initialize", {
+      protocolVersion: "2025-11-25",
+      roots: [],
+      capabilities: {
+        roots: {
+          listChanged: true
+        }
+      },
+      clientInfo: {
+        name: "spiki-empty-roots-test",
+        version: "0.1.0"
+      }
+    }),
+    /roots must not be empty/u
+  );
+});
+
+test("spiki launcher negotiates the server protocol version during initialize", {
+  timeout: 60000,
+  concurrency: false
+}, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-protocol-negotiate-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  const initialize = await client.request("initialize", {
+    protocolVersion: "2024-10-07",
+    roots: [{ uri: context.rootUri, name: "integration" }],
+    capabilities: {
+      roots: {
+        listChanged: true
+      }
+    },
+    clientInfo: {
+      name: "spiki-protocol-negotiate-test",
+      version: "0.1.0"
+    }
+  });
+  client.notify("notifications/initialized");
+
+  assert.equal(initialize.protocolVersion, "2025-11-25");
+  assert.deepEqual(initialize.capabilities, {
+    tools: {
+      listChanged: false
+    }
+  });
+});
+
+test("spiki launcher can allow roots-less initialize with explicit opt-in", { timeout: 60000, concurrency: false }, async (t) => {
   const context = await createTestEnvironment({
     prefix: "spiki-rootless-optin-",
     files: {

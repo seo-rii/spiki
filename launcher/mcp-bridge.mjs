@@ -112,9 +112,24 @@ export async function bridgeStdio() {
             return;
           }
 
+          if (message.method === "initialize" && Array.isArray(message.params?.roots) && message.params.roots.length === 0) {
+            const response = {
+              jsonrpc: "2.0",
+              id: message.id ?? null,
+              error: {
+                code: -32602,
+                message: "initialize.params.roots must not be empty"
+              }
+            };
+            const responsePayload = Buffer.from(JSON.stringify(response), "utf8");
+            process.stdout.write(`Content-Length: ${responsePayload.length}\r\n\r\n`);
+            process.stdout.write(responsePayload);
+            continue;
+          }
+
           if (
             message.method === "initialize" &&
-            !message.params?.roots &&
+            message.params?.roots == null &&
             !message.params?.capabilities?.roots
           ) {
             if (!allowCwdRootFallback) {
@@ -173,9 +188,23 @@ export async function bridgeStdio() {
           );
           return;
         }
+        if (message.method === "initialize" && Array.isArray(message.params?.roots) && message.params.roots.length === 0) {
+          process.stdout.write(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id ?? null,
+              error: {
+                code: -32602,
+                message: "initialize.params.roots must not be empty"
+              }
+            })}\n`
+          );
+          continue;
+        }
+
         if (
           message.method === "initialize" &&
-          !message.params?.roots &&
+          message.params?.roots == null &&
           !message.params?.capabilities?.roots
         ) {
           if (!allowCwdRootFallback) {

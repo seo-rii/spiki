@@ -122,20 +122,36 @@ async fn handle_request(
 }
 
 async fn handle_initialize(session: &Arc<Session>, params: Value) -> Result<Value> {
-    let protocol_version = params
+    let requested_protocol_version = params
         .get("protocolVersion")
         .and_then(Value::as_str)
-        .unwrap_or("2025-11-25")
+        .unwrap_or(SPIKI_PROTOCOL_VERSION)
         .to_string();
     let client_supports_roots = params
         .get("capabilities")
         .and_then(|value| value.get("roots"))
         .is_some();
+    let roots_present = params.get("roots").is_some();
     let init_roots = parse_root_uris(params.get("roots"));
+    if roots_present && init_roots.is_none() {
+        return Err(anyhow!(
+            "invalid params: initialize.params.roots must be an array of roots"
+        ));
+    }
+    if init_roots.as_ref().is_some_and(Vec::is_empty) {
+        return Err(anyhow!(
+            "invalid params: initialize.params.roots must not be empty"
+        ));
+    }
+    let negotiated_protocol_version = if requested_protocol_version == SPIKI_PROTOCOL_VERSION {
+        requested_protocol_version
+    } else {
+        SPIKI_PROTOCOL_VERSION.to_string()
+    };
 
     {
         let mut version = session.protocol_version.lock().await;
-        *version = protocol_version.clone();
+        *version = negotiated_protocol_version.clone();
     }
     {
         let mut roots = session.roots.lock().await;
@@ -145,7 +161,7 @@ async fn handle_initialize(session: &Arc<Session>, params: Value) -> Result<Valu
     }
 
     Ok(json!({
-        "protocolVersion": protocol_version,
+        "protocolVersion": negotiated_protocol_version,
         "capabilities": {
             "tools": { "listChanged": false }
         },
@@ -316,6 +332,8 @@ fn send_protocol_error(session: &Session, id: Value, error: anyhow::Error) -> Re
     let message = error.to_string();
     let code = if message.starts_with("method not found:") {
         -32601
+    } else if message.starts_with("invalid params:") {
+        -32602
     } else if message == "request missing method" {
         -32600
     } else {
