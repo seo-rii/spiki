@@ -12,6 +12,7 @@ pub(crate) async fn handle_tool_call(
     session: &Session,
     request_id: &str,
     params: Value,
+    related_task_id: Option<&str>,
 ) -> Result<Value> {
     let name = params
         .get("name")
@@ -30,6 +31,7 @@ pub(crate) async fn handle_tool_call(
     if let Some(progress_token) = &progress_token {
         session
             .send_progress(
+                related_task_id.unwrap_or(request_id),
                 progress_token,
                 1,
                 3,
@@ -37,16 +39,22 @@ pub(crate) async fn handle_tool_call(
             )
             .await?;
     }
-    if session.is_request_cancelled(request_id).await {
+    if session.is_operation_cancelled(request_id).await {
         return Err(anyhow!("request cancelled"));
     }
     let view = session.ensure_view().await?;
     if let Some(progress_token) = &progress_token {
         session
-            .send_progress(progress_token, 2, 3, &format!("Running {name}"))
+            .send_progress(
+                related_task_id.unwrap_or(request_id),
+                progress_token,
+                2,
+                3,
+                &format!("Running {name}"),
+            )
             .await?;
     }
-    if session.is_request_cancelled(request_id).await {
+    if session.is_operation_cancelled(request_id).await {
         return Err(anyhow!("request cancelled"));
     }
 
@@ -160,12 +168,18 @@ pub(crate) async fn handle_tool_call(
         }),
     };
 
-    if session.is_request_cancelled(request_id).await {
+    if session.is_operation_cancelled(request_id).await {
         return Err(anyhow!("request cancelled"));
     }
     if let Some(progress_token) = &progress_token {
         session
-            .send_progress(progress_token, 3, 3, &format!("Completed {name}"))
+            .send_progress(
+                related_task_id.unwrap_or(request_id),
+                progress_token,
+                3,
+                3,
+                &format!("Completed {name}"),
+            )
             .await?;
     }
 
@@ -190,6 +204,9 @@ pub(crate) fn tool_specs() -> Vec<Value> {
             "name": "ae.workspace.search_text",
             "title": "Search Text",
             "description": "Run ignore-aware literal, regex, or whole-word text search.",
+            "execution": {
+                "taskSupport": "optional"
+            },
             "inputSchema": search_text_schema()
         }),
         json!({
@@ -223,6 +240,10 @@ pub(crate) fn tool_specs() -> Vec<Value> {
             "inputSchema": semantic_ensure_schema()
         }),
     ]
+}
+
+pub(crate) fn tool_supports_task_execution(name: &str) -> bool {
+    name == "ae.workspace.search_text"
 }
 
 fn read_spans_schema() -> Value {
@@ -412,6 +433,10 @@ mod tests {
 
         let search_text_schema = find_input_schema(&tools, "ae.workspace.search_text");
         assert_eq!(
+            find_tool(&tools, "ae.workspace.search_text")["execution"]["taskSupport"],
+            json!("optional")
+        );
+        assert_eq!(
             search_text_schema["properties"]["query"]["minLength"],
             json!(1)
         );
@@ -519,10 +544,14 @@ mod tests {
         assert!(validate_read_spans_input(&valid).is_none());
     }
 
-    fn find_input_schema<'a>(tools: &'a [Value], name: &str) -> &'a Value {
-        &tools
+    fn find_tool<'a>(tools: &'a [Value], name: &str) -> &'a Value {
+        tools
             .iter()
             .find(|tool| tool["name"] == name)
-            .unwrap_or_else(|| panic!("missing tool {name}"))["inputSchema"]
+            .unwrap_or_else(|| panic!("missing tool {name}"))
+    }
+
+    fn find_input_schema<'a>(tools: &'a [Value], name: &str) -> &'a Value {
+        &find_tool(tools, name)["inputSchema"]
     }
 }

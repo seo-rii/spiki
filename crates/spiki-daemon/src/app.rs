@@ -253,6 +253,7 @@ async fn handle_connection(
         cancelled_requests: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         request_lock: tokio::sync::Mutex::new(()),
         roots: tokio::sync::Mutex::new(RootsState::default()),
+        tasks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         next_request_id: std::sync::atomic::AtomicU64::new(1),
         protocol_version: tokio::sync::Mutex::new(String::from("2025-11-25")),
     });
@@ -282,6 +283,15 @@ async fn handle_connection(
                     if let Some(request_id) = message.get("id").and_then(|value| id_to_string(value).ok()) {
                         session.note_incoming_request(request_id).await;
                     }
+                    if is_task_request(&message) {
+                        let task_session = session.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) = handle_message(task_session, message).await {
+                                error!("failed to handle task request: {error:#}");
+                            }
+                        });
+                        continue;
+                    }
                     if request_tx.send(message).is_err() {
                         break;
                     }
@@ -301,4 +311,11 @@ async fn handle_connection(
     request_task.abort();
     writer_task.abort();
     Ok(())
+}
+
+fn is_task_request(message: &Value) -> bool {
+    matches!(
+        message.get("method").and_then(Value::as_str),
+        Some("tasks/list" | "tasks/get" | "tasks/result" | "tasks/cancel")
+    )
 }

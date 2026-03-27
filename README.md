@@ -77,6 +77,6 @@ Until an npm release is actually published, use the repository checkout or `npm 
 - `spiki` is still a reference build, not a complete production editor runtime.
 - Phase 1 focuses on reliable text and workspace operations.
 - Semantic lifecycle support is currently a cached skeleton state, not a full semantic engine.
-- The current advertised server capability surface is tools-only; resources and task-augmented flows remain out of scope for this phase, while request-level MCP progress and cancellation are supported for tool calls.
+- The current advertised server capability surface includes tools plus MCP tasks for `tools/call`; task-augmented execution is currently exposed for `ae.workspace.search_text`, while resources remain out of scope for this phase.
 - Roots-less clients are rejected by default to avoid implicit ACL expansion; the current launcher only allows `cwd` fallback behind `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`.
 - The specification is intentionally ahead of the current implementation in some areas.

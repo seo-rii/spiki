@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url";
 
 import { createTestEnvironment, projectRoot, runProcess } from "./lib/test-env.mjs";
 
+const RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
+
 class McpLauncherClient {
   constructor(child, rootUri, options = {}) {
     this.child = child;
@@ -446,6 +448,15 @@ test("spiki launcher negotiates the server protocol version during initialize", 
   assert.deepEqual(initialize.capabilities, {
     tools: {
       listChanged: false
+    },
+    tasks: {
+      list: {},
+      cancel: {},
+      requests: {
+        tools: {
+          call: {}
+        }
+      }
     }
   });
 });
@@ -617,6 +628,147 @@ test("spiki launcher emits progress notifications for tool calls with progress t
   assert.match(progressNotifications[2].params.message, /Completed ae\.workspace\.search_text/u);
 });
 
+test("spiki launcher supports task-augmented search_text requests", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-task-search-",
+    files: {
+      "index.ts": "const needle = 1;\nconsole.log(needle);\n",
+      "nested/example.ts": "export const nestedValue = needle;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await client.initialize();
+  const notificationOffset = client.notifications.length;
+  const createTask = await client.request("tools/call", {
+    name: "ae.workspace.search_text",
+    arguments: {
+      query: "needle",
+      mode: "literal",
+      limit: 10
+    },
+    task: {
+      ttl: 60000
+    },
+    _meta: {
+      progressToken: "task-search-progress"
+    }
+  });
+  const taskId = createTask.task.taskId;
+
+  assert.equal(createTask.task.status, "working");
+  assert.equal(createTask._meta[RELATED_TASK_META_KEY].taskId, taskId);
+
+  const listedTasks = await client.request("tasks/list", {});
+  assert.ok(listedTasks.tasks.some((task) => task.taskId === taskId));
+
+  const taskState = await client.request("tasks/get", { taskId });
+  assert.ok(["working", "completed"].includes(taskState.status));
+
+  const taskResult = await client.request("tasks/result", { taskId });
+  assert.equal(taskResult.isError, false);
+  assert.equal(taskResult.structuredContent.matches.length, 3);
+  assert.equal(taskResult._meta[RELATED_TASK_META_KEY].taskId, taskId);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const taskNotifications = client.notifications
+    .slice(notificationOffset)
+    .filter(
+      (message) =>
+        message.method === "notifications/tasks/status" && message.params?.taskId === taskId
+    );
+  assert.ok(taskNotifications.some((message) => message.params.status === "working"));
+  assert.ok(taskNotifications.some((message) => message.params.status === "completed"));
+
+  const progressNotifications = client.notifications
+    .slice(notificationOffset)
+    .filter(
+      (message) =>
+        message.method === "notifications/progress" &&
+        message.params?.progressToken === "task-search-progress"
+    );
+  assert.ok(progressNotifications.length >= 2);
+  assert.equal(progressNotifications[0].params._meta[RELATED_TASK_META_KEY].taskId, taskId);
+});
+
+test("spiki launcher supports cancelling task-augmented requests", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-task-cancel-",
+    files: {
+      "index.ts": "const answer = 42;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await client.initialize();
+  const deferredRootsList = client.deferNextRootsList();
+  client.notify("notifications/roots/list_changed");
+
+  const createTask = await client.request("tools/call", {
+    name: "ae.workspace.search_text",
+    arguments: {
+      query: "answer",
+      mode: "literal",
+      limit: 10
+    },
+    task: {
+      ttl: 60000
+    }
+  });
+  const taskId = createTask.task.taskId;
+  await deferredRootsList;
+
+  const inFlightTask = await client.request("tasks/get", { taskId });
+  assert.equal(inFlightTask.status, "working");
+
+  const cancelledTask = await client.request("tasks/cancel", { taskId });
+  assert.equal(cancelledTask.status, "cancelled");
+
+  const taskResult = await client.request("tasks/result", { taskId });
+  assert.equal(taskResult.isError, true);
+  assert.equal(taskResult.structuredContent.code, "AE_CANCELLED");
+  assert.equal(taskResult._meta[RELATED_TASK_META_KEY].taskId, taskId);
+
+  client.releaseDeferredRootsList();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const cancelledState = await client.request("tasks/get", { taskId });
+  assert.equal(cancelledState.status, "cancelled");
+});
+
 test("spiki launcher suppresses responses for cancelled queued tool requests", { timeout: 60000 }, async (t) => {
   const context = await createTestEnvironment({
     prefix: "spiki-cancel-queued-",
@@ -734,6 +886,15 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   assert.deepEqual(initialize.capabilities, {
     tools: {
       listChanged: false
+    },
+    tasks: {
+      list: {},
+      cancel: {},
+      requests: {
+        tools: {
+          call: {}
+        }
+      }
     }
   });
   if (process.platform !== "win32") {
@@ -773,6 +934,10 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
     "ae.workspace.search_text",
     "ae.workspace.status"
   ]);
+  assert.equal(
+    tools.tools.find((tool) => tool.name === "ae.workspace.search_text").execution.taskSupport,
+    "optional"
+  );
 
   const workspaceStatus = await client.request("tools/call", {
     name: "ae.workspace.status",
