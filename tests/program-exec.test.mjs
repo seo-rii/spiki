@@ -167,7 +167,9 @@ class McpLauncherClient {
 
     this.pending.delete(String(message.id));
     if (message.error) {
-      pending.reject(new Error(message.error.message));
+      const error = new Error(message.error.message);
+      error.code = message.error.code;
+      pending.reject(error);
       return;
     }
 
@@ -392,7 +394,7 @@ test("spiki launcher rejects initialize with an explicit empty root set", { time
         version: "0.1.0"
       }
     }),
-    /roots must not be empty/u
+    (error) => error?.code === -32602 && /roots must not be empty/u.test(error.message)
   );
 });
 
@@ -749,8 +751,15 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   const runningStatusJson = JSON.parse(runningStatusAfterInit.stdout);
   assert.equal(runningStatusJson.reachable, true);
   assert.equal(runningStatusJson.compatible, true);
-  await assert.rejects(client.request("resources/list"), /method not found: resources\/list/);
-  await assert.rejects(client.request("resources/templates/list"), /method not found: resources\/templates\/list/);
+  await assert.rejects(
+    client.request("resources/list"),
+    (error) => error?.code === -32601 && /method not found: resources\/list/u.test(error.message)
+  );
+  await assert.rejects(
+    client.request("resources/templates/list"),
+    (error) =>
+      error?.code === -32601 && /method not found: resources\/templates\/list/u.test(error.message)
+  );
 
   const tools = await client.request("tools/list");
   const toolNames = tools.tools.map((tool) => tool.name).sort();
