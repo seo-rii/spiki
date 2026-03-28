@@ -443,6 +443,10 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     use tempfile::tempdir;
 
@@ -504,10 +508,13 @@ mod tests {
             .unwrap();
 
         let external_contents = String::from("const external = 1;\nconsole.log(external);\n");
+        let hook_ran = Arc::new(AtomicBool::new(false));
         APPLY_PLAN_BEFORE_COMMIT_HOOK.with(|slot| {
             let file_path = file_path.clone();
             let external_contents = external_contents.clone();
+            let hook_ran = hook_ran.clone();
             *slot.borrow_mut() = Some(Box::new(move || {
+                hook_ran.store(true, Ordering::Relaxed);
                 fs::write(&file_path, &external_contents).unwrap();
             }));
         });
@@ -522,8 +529,9 @@ mod tests {
             )
             .unwrap_err();
 
+        assert!(hook_ran.load(Ordering::Relaxed));
         assert_eq!(error.code, "AE_STALE_PLAN");
-        assert!(error.message.contains("before commit"));
+        assert!(error.message.contains("Fingerprint mismatch"));
         assert_eq!(fs::read_to_string(&file_path).unwrap(), external_contents);
 
         let missing = runtime
