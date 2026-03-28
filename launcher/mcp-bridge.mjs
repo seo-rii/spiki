@@ -29,6 +29,63 @@ function parseBoundedContentLength(header, source) {
   return length;
 }
 
+function buildInitializeErrorResponse(message, errorMessage) {
+  return {
+    jsonrpc: "2.0",
+    id: message.id ?? null,
+    error: {
+      code: -32602,
+      message: errorMessage
+    }
+  };
+}
+
+function writeClientResponse(response, clientMode) {
+  const payload = Buffer.from(JSON.stringify(response), "utf8");
+  if (clientMode === "content-length") {
+    process.stdout.write(`Content-Length: ${payload.length}\r\n\r\n`);
+    process.stdout.write(payload);
+    return;
+  }
+  process.stdout.write(`${payload.toString("utf8")}\n`);
+}
+
+function normalizeInitializeMessage(message, allowCwdRootFallback) {
+  if (message.method !== "initialize") {
+    return { message, response: null };
+  }
+  if (Array.isArray(message.params?.roots) && message.params.roots.length === 0) {
+    return {
+      message,
+      response: buildInitializeErrorResponse(message, "initialize.params.roots must not be empty")
+    };
+  }
+  if (message.params?.roots != null || message.params?.capabilities?.roots) {
+    return { message, response: null };
+  }
+  if (!allowCwdRootFallback) {
+    return {
+      message,
+      response: buildInitializeErrorResponse(
+        message,
+        "Client must provide initialize.params.roots or set SPIKI_ALLOW_CWD_ROOT_FALLBACK=1"
+      )
+    };
+  }
+
+  const params = message.params ?? {};
+  return {
+    message: {
+      ...message,
+      params: {
+        ...params,
+        roots: [{ uri: pathToFileURL(process.cwd()).toString(), name: path.basename(process.cwd()) || "workspace" }]
+      }
+    },
+    response: null
+  };
+}
+
 export async function bridgeStdio() {
   const { socketPath } = await ensureDaemonRunning();
   const socket = await connectSocket(socketPath, 1000);
@@ -111,49 +168,12 @@ export async function bridgeStdio() {
             );
             return;
           }
-
-          if (message.method === "initialize" && Array.isArray(message.params?.roots) && message.params.roots.length === 0) {
-            const response = {
-              jsonrpc: "2.0",
-              id: message.id ?? null,
-              error: {
-                code: -32602,
-                message: "initialize.params.roots must not be empty"
-              }
-            };
-            const responsePayload = Buffer.from(JSON.stringify(response), "utf8");
-            process.stdout.write(`Content-Length: ${responsePayload.length}\r\n\r\n`);
-            process.stdout.write(responsePayload);
+          const normalized = normalizeInitializeMessage(message, allowCwdRootFallback);
+          if (normalized.response) {
+            writeClientResponse(normalized.response, clientMode);
             continue;
           }
-
-          if (
-            message.method === "initialize" &&
-            message.params?.roots == null &&
-            !message.params?.capabilities?.roots
-          ) {
-            if (!allowCwdRootFallback) {
-              const response = {
-                jsonrpc: "2.0",
-                id: message.id ?? null,
-                error: {
-                  code: -32602,
-                  message:
-                    "Client must provide initialize.params.roots or set SPIKI_ALLOW_CWD_ROOT_FALLBACK=1"
-                }
-              };
-              const responsePayload = Buffer.from(JSON.stringify(response), "utf8");
-              process.stdout.write(`Content-Length: ${responsePayload.length}\r\n\r\n`);
-              process.stdout.write(responsePayload);
-              continue;
-            }
-
-            const params = message.params ?? {};
-            message.params = {
-              ...params,
-              roots: [{ uri: pathToFileURL(process.cwd()).toString(), name: path.basename(process.cwd()) || "workspace" }]
-            };
-          }
+          message = normalized.message;
 
           const forwardPayload = Buffer.from(JSON.stringify(message), "utf8");
           if (forwardPayload.length > MAX_BRIDGE_FRAME_BYTES) {
@@ -188,46 +208,12 @@ export async function bridgeStdio() {
           );
           return;
         }
-        if (message.method === "initialize" && Array.isArray(message.params?.roots) && message.params.roots.length === 0) {
-          process.stdout.write(
-            `${JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id ?? null,
-              error: {
-                code: -32602,
-                message: "initialize.params.roots must not be empty"
-              }
-            })}\n`
-          );
+        const normalized = normalizeInitializeMessage(message, allowCwdRootFallback);
+        if (normalized.response) {
+          writeClientResponse(normalized.response, clientMode);
           continue;
         }
-
-        if (
-          message.method === "initialize" &&
-          message.params?.roots == null &&
-          !message.params?.capabilities?.roots
-        ) {
-          if (!allowCwdRootFallback) {
-            process.stdout.write(
-              `${JSON.stringify({
-                jsonrpc: "2.0",
-                id: message.id ?? null,
-                error: {
-                  code: -32602,
-                  message:
-                    "Client must provide initialize.params.roots or set SPIKI_ALLOW_CWD_ROOT_FALLBACK=1"
-                }
-              })}\n`
-            );
-            continue;
-          }
-
-          const params = message.params ?? {};
-          message.params = {
-            ...params,
-            roots: [{ uri: pathToFileURL(process.cwd()).toString(), name: path.basename(process.cwd()) || "workspace" }]
-          };
-        }
+        message = normalized.message;
 
         const outgoingPayload = Buffer.from(JSON.stringify(message), "utf8");
         if (outgoingPayload.length > MAX_BRIDGE_FRAME_BYTES) {
