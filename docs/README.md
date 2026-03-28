@@ -4,6 +4,15 @@ This directory contains project-facing documentation for the current `spiki` ref
 
 `SPEC.md` in the repository root remains the normative design document. The files here are shorter operational guides for contributors and integrators.
 
+## Implemented vs Planned
+
+| Area | Implemented on `main` | Planned in `SPEC.md` |
+| --- | --- | --- |
+| Public MCP surface | `ae.workspace.*`, `ae.edit.*`, `ae.semantic.*` | broader Phase 2+ tool families |
+| Resources | not advertised; `resources/*` returns method-not-found | broader MCP support is still described in the long-range spec |
+| Task-augmented execution | only `ae.workspace.search_text` | wider task support across long-running tools |
+| npm UX | local `spiki` package and checkout workflow | broader release/distribution UX remains planned |
+
 ## Guides
 
 - [Architecture](./architecture.md): launcher, daemon, runtime boundaries, and current Phase 1 responsibilities

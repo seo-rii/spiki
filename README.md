@@ -72,6 +72,15 @@ Until an npm release is actually published, use the repository checkout or `npm 
 - [Language profiles](./docs/language-profiles.md)
 - [Full specification](./SPEC.md)
 
+## Contract Status
+
+| Area | Implemented on `main` | Planned in `SPEC.md` |
+| --- | --- | --- |
+| Public MCP surface | `ae.workspace.*`, `ae.edit.*`, `ae.semantic.*` | broader reserved tool families |
+| Resources | not advertised; `resources/*` is out of scope for this phase | broader MCP support remains planned |
+| Task-augmented execution | only `ae.workspace.search_text` | wider task support remains planned |
+| npm UX | local `spiki` package and repository checkout workflow | fuller release UX remains planned |
+
 ## Current Scope
 
 - `spiki` is still a reference build, not a complete production editor runtime.
