@@ -106,7 +106,8 @@ impl Runtime {
             requires_confirmation: true,
         };
         let revision = self.current_revision(view);
-        let plan_id = self.store_plan(view, revision.clone(), prepared_file_edits, summary.clone());
+        let plan_id =
+            self.store_plan(view, revision.clone(), prepared_file_edits, summary.clone())?;
 
         Ok(PreparePlanOutput {
             plan_id,
@@ -407,7 +408,7 @@ impl Runtime {
             blocked: Some(0),
             requires_confirmation: true,
         };
-        let plan_id = self.store_plan(view, revision.clone(), file_edits, summary);
+        let plan_id = self.store_plan(view, revision.clone(), file_edits, summary)?;
 
         Ok((plan_id, revision))
     }
@@ -418,8 +419,17 @@ impl Runtime {
         revision: String,
         file_edits: Vec<FileEdit>,
         summary: PlanSummary,
-    ) -> String {
+    ) -> SpikiResult<String> {
         let plan_id = format!("plan_{}", Uuid::now_v7().simple());
+        let plan_ttl = chrono::Duration::from_std(self.state.config.plan_ttl).map_err(|error| {
+            spiki_error(
+                SpikiCode::Internal,
+                format!(
+                    "Configured plan_ttl {:?} is out of range for chrono duration conversion: {error}",
+                    self.state.config.plan_ttl
+                ),
+            )
+        })?;
         let mut meta = view.workspace.meta.lock();
         Self::sweep_terminal_plans(&mut meta);
         meta.plans.insert(
@@ -429,14 +439,13 @@ impl Runtime {
                 view_id: view.view_id.clone(),
                 workspace_revision: revision,
                 _created_at: Utc::now(),
-                expires_at: Utc::now()
-                    + chrono::Duration::from_std(self.state.config.plan_ttl).unwrap(),
+                expires_at: Utc::now() + plan_ttl,
                 file_edits,
                 _summary: summary,
                 state: PlanState::Ready,
             },
         );
-        plan_id
+        Ok(plan_id)
     }
 }
 
@@ -447,11 +456,12 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    use std::time::Duration;
 
     use tempfile::tempdir;
 
     use crate::model::{ApplyPlanInput, FileEdit, Position, Range, TextEdit};
-    use crate::runtime::Runtime;
+    use crate::runtime::{Runtime, RuntimeConfig};
     use crate::text::{file_uri_from_path, fingerprint_for_file, read_text_file};
 
     use super::APPLY_PLAN_BEFORE_COMMIT_HOOK;
@@ -544,5 +554,48 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(missing.code, "AE_NOT_FOUND");
+    }
+
+    #[test]
+    fn seed_plan_for_test_rejects_out_of_range_plan_ttl() {
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("sample.ts");
+        fs::write(&file_path, "const answer = 42;\n").unwrap();
+
+        let runtime = Runtime::new(RuntimeConfig {
+            plan_ttl: Duration::MAX,
+            ..RuntimeConfig::default()
+        });
+        let view = runtime
+            .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+            .unwrap();
+        let loaded = read_text_file(&file_path).unwrap();
+        let fingerprint = fingerprint_for_file(&file_path, &loaded);
+
+        let error = runtime
+            .seed_plan_for_test(
+                &view,
+                vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: Some(fingerprint),
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 6,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 12,
+                            },
+                        },
+                        new_text: String::from("result"),
+                    }],
+                }],
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "AE_INTERNAL");
+        assert!(error.message.contains("plan_ttl"));
     }
 }
