@@ -2,6 +2,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::PathBuf;
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -35,6 +36,17 @@ fn run_apply_plan_before_commit_hook_for_test() {
 
 #[cfg(not(test))]
 fn run_apply_plan_before_commit_hook_for_test() {}
+
+struct RenderedPlanFile {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+struct StagedPlanFile {
+    path: PathBuf,
+    temp_path: PathBuf,
+    backup_path: PathBuf,
+}
 
 impl Runtime {
     fn sweep_terminal_plans(meta: &mut WorkspaceMeta) {
@@ -228,50 +240,63 @@ impl Runtime {
                     ),
                 ));
             };
-            rewritten_files.push((canonical, rewritten_bytes));
+            rewritten_files.push(RenderedPlanFile {
+                path: canonical,
+                bytes: rewritten_bytes,
+            });
             files_touched += 1;
             edits_applied += file_edit.edits.len() as u64;
         }
 
-        let mut staged_files = Vec::new();
-        for (path, content) in &rewritten_files {
-            let temp_path = path.with_file_name(format!(
+        // Stage rewritten bytes into temp files before touching any original file.
+        let mut staged_files: Vec<StagedPlanFile> = Vec::new();
+        for rewritten_file in &rewritten_files {
+            let temp_path = rewritten_file.path.with_file_name(format!(
                 ".{}.spiki-tmp-{}",
-                path.file_name()
+                rewritten_file
+                    .path
+                    .file_name()
                     .and_then(|value| value.to_str())
                     .unwrap_or("spiki"),
                 Uuid::now_v7().simple()
             ));
-            let backup_path = path.with_file_name(format!(
+            let backup_path = rewritten_file.path.with_file_name(format!(
                 ".{}.spiki-bak-{}",
-                path.file_name()
+                rewritten_file
+                    .path
+                    .file_name()
                     .and_then(|value| value.to_str())
                     .unwrap_or("spiki"),
                 Uuid::now_v7().simple()
             ));
-            if let Err(error) = fs::write(&temp_path, content) {
+            if let Err(error) = fs::write(&temp_path, &rewritten_file.bytes) {
                 let _ = fs::remove_file(&temp_path);
-                for (_, staged_temp, _) in staged_files {
-                    let _ = fs::remove_file(staged_temp);
+                for staged_file in staged_files {
+                    let _ = fs::remove_file(staged_file.temp_path);
                 }
                 return Err(spiki_error(
                     SpikiCode::Internal,
-                    format!("Failed to write {}: {error}", path.display()),
+                    format!("Failed to write {}: {error}", rewritten_file.path.display()),
                 ));
             }
-            staged_files.push((path.clone(), temp_path, backup_path));
+            staged_files.push(StagedPlanFile {
+                path: rewritten_file.path.clone(),
+                temp_path,
+                backup_path,
+            });
         }
 
         run_apply_plan_before_commit_hook_for_test();
 
+        // Revalidate live file fingerprints after staging but before commit.
         for file_edit in &plan.file_edits {
             let path = path_from_file_uri(&file_edit.uri)?;
             let canonical = ensure_path_in_roots(&path, &view.roots_canonical)?;
             let loaded = match read_text_file(&canonical) {
                 Ok(value) => value,
                 Err(error) => {
-                    for (_, staged_temp, _) in &staged_files {
-                        let _ = fs::remove_file(staged_temp);
+                    for staged_file in &staged_files {
+                        let _ = fs::remove_file(&staged_file.temp_path);
                     }
                     return Err(error);
                 }
@@ -279,8 +304,8 @@ impl Runtime {
             if let Some(expected) = &file_edit.fingerprint {
                 let actual = fingerprint_for_file(&canonical, &loaded);
                 if &actual != expected {
-                    for (_, staged_temp, _) in &staged_files {
-                        let _ = fs::remove_file(staged_temp);
+                    for staged_file in &staged_files {
+                        let _ = fs::remove_file(&staged_file.temp_path);
                     }
                     meta.plans.remove(&input.plan_id);
                     return Err(spiki_error(
@@ -292,44 +317,45 @@ impl Runtime {
         }
 
         let mut backed_up = Vec::new();
-        for (path, _, backup_path) in &staged_files {
-            if let Err(error) = fs::rename(path, backup_path) {
-                for (_, staged_temp, _) in &staged_files {
-                    let _ = fs::remove_file(staged_temp);
+        for staged_file in &staged_files {
+            if let Err(error) = fs::rename(&staged_file.path, &staged_file.backup_path) {
+                for staged_file in &staged_files {
+                    let _ = fs::remove_file(&staged_file.temp_path);
                 }
                 for (rollback_path, rollback_backup) in backed_up.into_iter().rev() {
                     let _ = fs::rename(rollback_backup, rollback_path);
                 }
                 return Err(spiki_error(
                     SpikiCode::Internal,
-                    format!("Failed to stage {} for apply: {error}", path.display()),
+                    format!(
+                        "Failed to stage {} for apply: {error}",
+                        staged_file.path.display()
+                    ),
                 ));
             }
-            backed_up.push((path.clone(), backup_path.clone()));
+            backed_up.push((staged_file.path.clone(), staged_file.backup_path.clone()));
         }
 
         let mut committed = Vec::new();
-        for (index, (path, temp_path, backup_path)) in staged_files.iter().enumerate() {
-            if let Err(error) = fs::rename(temp_path, path) {
-                let _ = fs::remove_file(temp_path);
-                let _ = fs::rename(backup_path, path);
+        for (index, staged_file) in staged_files.iter().enumerate() {
+            if let Err(error) = fs::rename(&staged_file.temp_path, &staged_file.path) {
+                let _ = fs::remove_file(&staged_file.temp_path);
+                let _ = fs::rename(&staged_file.backup_path, &staged_file.path);
 
                 for (rollback_path, rollback_backup) in committed.into_iter().rev() {
                     let _ = fs::remove_file(&rollback_path);
                     let _ = fs::rename(&rollback_backup, &rollback_path);
                 }
-                for (remaining_path, remaining_temp, remaining_backup) in
-                    staged_files.iter().skip(index + 1)
-                {
-                    let _ = fs::remove_file(remaining_temp);
-                    let _ = fs::rename(remaining_backup, remaining_path);
+                for remaining_file in staged_files.iter().skip(index + 1) {
+                    let _ = fs::remove_file(&remaining_file.temp_path);
+                    let _ = fs::rename(&remaining_file.backup_path, &remaining_file.path);
                 }
                 return Err(spiki_error(
                     SpikiCode::Internal,
-                    format!("Failed to commit {}: {error}", path.display()),
+                    format!("Failed to commit {}: {error}", staged_file.path.display()),
                 ));
             }
-            committed.push((path.clone(), backup_path.clone()));
+            committed.push((staged_file.path.clone(), staged_file.backup_path.clone()));
         }
 
         for (_, backup_path) in committed {
@@ -456,11 +482,12 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    use std::thread;
     use std::time::Duration;
 
     use tempfile::tempdir;
 
-    use crate::model::{ApplyPlanInput, FileEdit, Position, Range, TextEdit};
+    use crate::model::{ApplyPlanInput, FileEdit, Position, Range, TextEdit, WorkspaceStatusInput};
     use crate::runtime::{Runtime, RuntimeConfig};
     use crate::text::{file_uri_from_path, fingerprint_for_file, read_text_file};
 
@@ -476,6 +503,29 @@ mod tests {
         let view = runtime
             .upsert_view("session_test", &[file_uri_from_path(temp.path())])
             .unwrap();
+        let mut previous_revision = None;
+        let mut revision_stabilized = false;
+        for _ in 0..8 {
+            let status = runtime
+                .workspace_status(
+                    &view,
+                    WorkspaceStatusInput {
+                        include_backends: Some(false),
+                        include_coverage: Some(false),
+                    },
+                )
+                .unwrap();
+            if previous_revision.as_deref() == Some(status.workspace_revision.as_str()) {
+                revision_stabilized = true;
+                break;
+            }
+            previous_revision = Some(status.workspace_revision);
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            revision_stabilized,
+            "workspace revision did not stabilize before seeding the plan"
+        );
 
         let loaded = read_text_file(&file_path).unwrap();
         let fingerprint = fingerprint_for_file(&file_path, &loaded);
