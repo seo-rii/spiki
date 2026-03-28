@@ -44,8 +44,11 @@
   },
   "scripts": {
     "build:daemon": "node ./scripts/build-daemon.mjs",
+    "test": "npm run test:ci",
+    "test:ci": "node --test ./tests/bootstrap-race.test.mjs ./tests/package-metadata.test.mjs ./tests/program-exec.test.mjs ./tests/runtime-paths.test.mjs",
     "test:smoke": "node --test ./tests/program-exec.test.mjs",
     "test:codex": "node --test ./tests/codex-integration.test.mjs",
-    "test:integration": "node --test ./tests/*.test.mjs"
+    "test:integration": "node --test ./tests/*.test.mjs",
+    "ci": "node ./scripts/build-daemon.mjs && cargo test --workspace && npm run test:ci"
   }
 }

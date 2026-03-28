@@ -23,11 +23,5 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build daemon binary
-        run: node ./scripts/build-daemon.mjs
-
-      - name: Run Rust workspace tests
-        run: cargo test --workspace
-
-      - name: Run launcher smoke test
-        run: node --test ./tests/program-exec.test.mjs
+      - name: Run CI test entrypoint
+        run: npm run ci

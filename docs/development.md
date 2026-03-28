@@ -50,6 +50,14 @@ node ./bin/spiki.js daemon stop
 
 ## Testing
 
+### CI entrypoint
+
+```bash
+npm run ci
+```
+
+This is the merge-gated test entrypoint used by the GitHub Actions smoke workflows. It builds the daemon, runs `cargo test --workspace`, and then runs the launcher-focused Node test suite (`bootstrap-race`, `package-metadata`, `program-exec`, `runtime-paths`).
+
 ### Rust tests
 
 ```bash
