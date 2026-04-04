@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,11 +40,27 @@ export function getSocketPath(runtimeDir) {
   return path.join(runtimeDir, "daemon.sock");
 }
 
+export function getDaemonBinaryName() {
+  return process.platform === "win32" ? "spiki-daemon.exe" : "spiki-daemon";
+}
+
+export function getNativeBundleId() {
+  return `${process.platform}-${process.arch}`;
+}
+
+export function getBundledDaemonBinary(projectRoot) {
+  return path.join(projectRoot, "bin", "native", getNativeBundleId(), getDaemonBinaryName());
+}
+
 export function resolveDaemonBinary(projectRoot) {
   if (process.env.SPIKI_DAEMON_BIN) {
     return process.env.SPIKI_DAEMON_BIN;
   }
 
-  const binaryName = process.platform === "win32" ? "spiki-daemon.exe" : "spiki-daemon";
-  return path.join(projectRoot, "target", "debug", binaryName);
+  const bundledBinary = getBundledDaemonBinary(projectRoot);
+  if (fs.existsSync(bundledBinary)) {
+    return bundledBinary;
+  }
+
+  return path.join(projectRoot, "target", "debug", getDaemonBinaryName());
 }

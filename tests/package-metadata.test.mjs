@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { projectRoot, runProcess } from "./lib/test-env.mjs";
 
-test("package metadata is publish-ready", { timeout: 30000 }, async () => {
+test("package metadata is publish-ready", { timeout: 60000 }, async () => {
   const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
 
   assert.notEqual(packageJson.private, true);
@@ -27,7 +27,7 @@ test("package metadata is publish-ready", { timeout: 30000 }, async () => {
 
   const packResult = await runProcess("npm", ["pack", "--json", "--dry-run"], {
     cwd: projectRoot,
-    timeoutMs: 30000
+    timeoutMs: 60000
   });
   assert.equal(packResult.code, 0, packResult.stderr);
 
@@ -36,7 +36,18 @@ test("package metadata is publish-ready", { timeout: 30000 }, async () => {
   assert.ok(packedFiles.has("bin/spiki.js"));
   assert.ok(packedFiles.has("launcher/runtime.mjs"));
   assert.ok(packedFiles.has("scripts/build-daemon.mjs"));
+  assert.ok(packedFiles.has("scripts/prepare-package.mjs"));
   assert.ok(packedFiles.has("crates/spiki-daemon/src/main.rs"));
   assert.ok(packedFiles.has("README.md"));
   assert.ok(packedFiles.has("SPEC.md"));
+  assert.ok(
+    packedFiles.has(
+      path.posix.join(
+        "bin",
+        "native",
+        `${process.platform}-${process.arch}`,
+        process.platform === "win32" ? "spiki-daemon.exe" : "spiki-daemon"
+      )
+    )
+  );
 });

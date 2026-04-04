@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { getRuntimeDir } from "../launcher/runtime-paths.mjs";
+import {
+  getBundledDaemonBinary,
+  getDaemonBinaryName,
+  getRuntimeDir,
+  getNativeBundleId,
+  resolveDaemonBinary
+} from "../launcher/runtime-paths.mjs";
 
 async function withTemporaryEnv(overrides, callback) {
   const previous = new Map();
@@ -69,5 +76,25 @@ test("getRuntimeDir honors XDG_RUNTIME_DIR on Unix-like hosts", async () => {
     async () => {
       assert.equal(getRuntimeDir(), "/tmp/spiki-runtime-test/spiki");
     }
+  );
+});
+
+test("resolveDaemonBinary prefers a packaged native daemon bundle", async (t) => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "spiki-runtime-paths-"));
+  t.after(async () => {
+    await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  const bundledBinary = getBundledDaemonBinary(tempRoot);
+  const debugBinary = path.join(tempRoot, "target", "debug", getDaemonBinaryName());
+  await mkdir(path.dirname(bundledBinary), { recursive: true });
+  await mkdir(path.dirname(debugBinary), { recursive: true });
+  await writeFile(debugBinary, "debug");
+  assert.equal(resolveDaemonBinary(tempRoot), debugBinary);
+
+  await writeFile(bundledBinary, "bundled");
+  assert.equal(
+    resolveDaemonBinary(tempRoot),
+    path.join(tempRoot, "bin", "native", getNativeBundleId(), getDaemonBinaryName())
   );
 });
