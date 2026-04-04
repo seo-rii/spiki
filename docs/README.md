@@ -8,10 +8,10 @@ This directory contains project-facing documentation for the current `spiki` ref
 
 | Area | Implemented on `main` | Planned in `SPEC.md` |
 | --- | --- | --- |
-| Public MCP surface | `ae.workspace.*`, `ae.edit.*`, `ae.semantic.*` | broader Phase 2+ tool families |
+| Public MCP surface | `ae.workspace.*`, `ae.edit.*`, `ae.semantic.*`, `ae.symbol.definition` | broader Phase 2+ tool families |
 | Resources | not advertised; `resources/*` returns method-not-found | broader MCP support is still described in the long-range spec |
 | Task-augmented execution | only `ae.workspace.search_text` | wider task support across long-running tools |
-| npm UX | local `spiki` package and checkout workflow | broader release/distribution UX remains planned |
+| npm UX | local `spiki` package, current-platform daemon bundling, and checkout workflow | broader release/distribution UX remains planned |
 
 ## Guides
 

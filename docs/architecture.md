@@ -28,7 +28,7 @@ The runtime transport is local-only:
 - Maintains shared workspace/runtime state across requests
 - Handles tool execution
 - Owns workspace scanning, file reads, search, and edit plan application
-- Tracks Phase 1 semantic backend state
+- Tracks semantic backend state and hosts configured LSP supervisors
 
 ### Core runtime
 
@@ -38,8 +38,9 @@ The core runtime is responsible for:
 - ignore-aware workspace scanning
 - exact span reads and fingerprints
 - literal, regex, and whole-word search
-- stored edit plan apply/discard flow
+- stored edit plan prepare/inspect/apply/discard flow
 - built-in language/profile detection
+- project-local runtime and language binding config loading
 
 ## Phase 1 Boundaries
 
@@ -49,9 +50,9 @@ Phase 1 is intentionally text-first.
 - Search and span reads are real.
 - Edit application with revision checks and fingerprints is real.
 - Semantic detection is real.
-- Semantic execution is still shallow and represented as cached backend lifecycle state.
+- Semantic execution is still intentionally narrow: configured LSP bindings can answer `ae.symbol.definition`, while the rest of the semantic surface remains lifecycle-oriented.
 
-That means `spiki` can already support reliable workspace introspection and guarded edits, but it is not yet a full syntax or LSP-backed semantic engine.
+That means `spiki` can already support reliable workspace introspection, guarded edits, and one high-value semantic lookup path, but it is not yet a full syntax or LSP-backed semantic engine.
 
 ## Why the daemon exists
 

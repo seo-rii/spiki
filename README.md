@@ -2,7 +2,7 @@
 
 `spiki` is an editor-oriented MCP reference implementation for agents that need stable workspace operations instead of ad hoc text patching.
 
-The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): workspace inspection, precise text reads, ignore-aware search, compare-and-swap edit application, and a lightweight semantic backend registry.
+The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): workspace inspection, precise text reads, ignore-aware search, compare-and-swap edit application, project-local config loading, and a lightweight semantic backend registry with an opt-in LSP definition path.
 
 ## Highlights
 
@@ -10,9 +10,10 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 - Rust daemon with shared workspace/runtime state across requests
 - Local transport over Unix domain sockets on Unix-like hosts and current-user-scoped named pipes on Windows
 - Ignore-aware workspace scanning, exact span reads, and text search
-- CAS-style edit plan prepare/apply/discard flow
+- CAS-style edit plan prepare/inspect/apply/discard flow
 - Built-in language profile detection for common web and general-purpose stacks
-- Phase 1 semantic lifecycle cache with `warm`, `refresh`, and `stop`
+- Project-local `spiki.yaml` and `spiki.languages.yaml` overrides
+- Phase 1 semantic lifecycle cache with optional LSP-backed definition requests
 
 ## Public MCP Tools
 
@@ -22,10 +23,12 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 | `ae.workspace.read_spans` | Read exact ranges from files with optional surrounding context and fingerprints. |
 | `ae.workspace.search_text` | Run literal, regex, or whole-word text search across the workspace, with `scope.includeDefaultExcluded` available when you need to traverse default-excluded directories. |
 | `ae.edit.prepare_plan` | Validate and store a new edit plan for later apply or discard. |
+| `ae.edit.inspect_plan` | Read a prepared edit plan before deciding whether to apply or discard it. |
 | `ae.edit.apply_plan` | Apply a previously prepared edit plan after compare-and-swap validation. |
 | `ae.edit.discard_plan` | Discard a prepared edit plan without mutating files. |
 | `ae.semantic.status` | Report detected leaf semantic profiles and their cached lifecycle state. |
-| `ae.semantic.ensure` | Warm, refresh, or stop the cached semantic state for a language profile. |
+| `ae.semantic.ensure` | Warm, refresh, or stop the configured semantic backend for a language profile. |
+| `ae.symbol.definition` | Resolve symbol definitions through a configured LSP-backed semantic binding. |
 
 ## Quick Start
 
@@ -62,7 +65,8 @@ Use `scope.includeDefaultExcluded=true` for one search, or set `SPIKI_DEFAULT_EX
 ### Intended npm surface
 
 The launcher package is prepared to publish as `spiki`.
-Until an npm release is actually published, use the repository checkout or `npm pack` output from this repository.
+`npm pack` from this repository now bundles the daemon for the current platform under `bin/native/<platform>-<arch>/`.
+Repository checkouts still support source-build fallback through Cargo when no packaged daemon is present.
 
 ## Documentation
 
@@ -76,16 +80,17 @@ Until an npm release is actually published, use the repository checkout or `npm 
 
 | Area | Implemented on `main` | Planned in `SPEC.md` |
 | --- | --- | --- |
-| Public MCP surface | `ae.workspace.*`, `ae.edit.*`, `ae.semantic.*` | broader reserved tool families |
+| Public MCP surface | `ae.workspace.*`, `ae.edit.*`, `ae.semantic.*`, `ae.symbol.definition` | broader reserved tool families |
 | Resources | not advertised; `resources/*` is out of scope for this phase | broader MCP support remains planned |
 | Task-augmented execution | only `ae.workspace.search_text` | wider task support remains planned |
-| npm UX | local `spiki` package and repository checkout workflow | fuller release UX remains planned |
+| npm UX | local `spiki` package, current-platform daemon bundling, and repository checkout workflow | fuller multi-platform release UX remains planned |
 
 ## Current Scope
 
 - `spiki` is still a reference build, not a complete production editor runtime.
 - Phase 1 focuses on reliable text and workspace operations.
-- Semantic lifecycle support is currently a cached skeleton state, not a full semantic engine.
+- Semantic lifecycle support is shallow by default, but custom LSP bindings can now service `ae.symbol.definition`.
 - The current advertised server capability surface includes tools plus MCP tasks for `tools/call`; task-augmented execution is currently exposed for `ae.workspace.search_text`, while resources remain out of scope for this phase.
 - Roots-less clients are rejected by default to avoid implicit ACL expansion; the current launcher only allows `cwd` fallback behind `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`.
 - The specification is intentionally ahead of the current implementation in some areas.
+- Project-level overrides live in `spiki.yaml`, `.spiki/config.yaml`, `spiki.languages.yaml`, and `.spiki/languages.yaml`.

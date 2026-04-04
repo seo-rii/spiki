@@ -17,15 +17,21 @@ On Unix-like hosts the launcher talks to the daemon over a Unix domain socket. O
 
 ## Packaging and distribution
 
-Current repository checkouts are development-oriented. If the launcher cannot find a daemon binary in the local build output, it falls back to building `spiki-daemon` from source, which means local development still expects a Rust toolchain.
+Current repository checkouts are development-oriented. If the launcher cannot find a daemon binary in the packaged native bundle or the local build output, it falls back to building `spiki-daemon` from source, which means local development still expects a Rust toolchain.
 
-The intended published distribution model is:
+The current package flow is:
+
+- `npm run prepare:package` builds the local daemon and stages it under `bin/native/<platform>-<arch>/`
+- `npm pack` includes that current-platform daemon in the package payload
+- `launcher/runtime-paths.mjs` resolves the packaged daemon first and falls back to `target/debug`
+
+The intended longer-range release model is still broader:
 
 - the npm package provides the public `spiki` launcher surface
 - platform-specific native daemon artifacts are resolved first at runtime
 - source builds remain a fallback for repository checkouts and unsupported targets, not the primary install path
 
-Until prebuilt daemon artifacts are wired into the release flow, `npm pack` output from this repository should be treated as a developer snapshot rather than a zero-toolchain end-user release.
+Until prebuilt multi-platform daemon artifacts are wired into the release flow, `npm pack` output from this repository should still be treated as a developer snapshot rather than a zero-toolchain end-user release.
 
 ## Common commands
 
@@ -47,6 +53,18 @@ node ./bin/spiki.js daemon status
 ```bash
 node ./bin/spiki.js daemon stop
 ```
+
+## Project configuration
+
+Workspace-local overrides are loaded from these files when present:
+
+- `spiki.yaml`
+- `.spiki/config.yaml`
+- `spiki.languages.yaml`
+- `.spiki/languages.yaml`
+
+Runtime config can override index size limits, plan TTL, exclude defaults, and watcher policy.
+Language config can override semantic bindings, including custom LSP command lines.
 
 ## Testing
 
