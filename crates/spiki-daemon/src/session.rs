@@ -12,6 +12,7 @@ use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 use uuid::Uuid;
 
 use crate::protocol::id_to_string;
+use crate::semantic::SemanticSupervisor;
 use crate::tools::{handle_tool_call, tool_specs, tool_supports_task_execution};
 
 const SPIKI_SERVER_NAME: &str = "spiki";
@@ -35,6 +36,7 @@ pub(crate) struct Session {
     pub(crate) tasks: Mutex<HashMap<String, TaskRecord>>,
     pub(crate) next_request_id: AtomicU64,
     pub(crate) protocol_version: Mutex<String>,
+    pub(crate) semantic_supervisor: Arc<SemanticSupervisor>,
 }
 
 #[derive(Default)]

@@ -1,9 +1,9 @@
 use globset::{Glob, GlobSetBuilder};
 
 use crate::model::{
-    Coverage, ExecutionError, ReadSpansInput, ReadSpansOutput, SearchTextInput, SearchTextOutput,
-    SemanticEnsureInput, SemanticEnsureOutput, SemanticStatusOutput, Warning, WorkspaceStatusInput,
-    WorkspaceStatusOutput,
+    Coverage, ExecutionError, ReadSpansInput, ReadSpansOutput, SearchTextInput,
+    SearchTextOutput, SemanticEnsureInput, SemanticEnsureOutput, SemanticStatusOutput, Warning,
+    WorkspaceStatusInput, WorkspaceStatusOutput,
 };
 use crate::text::{
     build_text_span, ensure_path_in_roots, file_uri_from_path, path_from_file_uri, read_text_file,
@@ -73,6 +73,7 @@ impl Runtime {
         let mut warnings = Vec::new();
         let mut matches = Vec::new();
         let scope = input.scope.clone();
+        let settings = view.workspace.settings.lock().clone();
         let scan = if scope
             .as_ref()
             .map(|value| {
@@ -162,13 +163,9 @@ impl Runtime {
                         .as_ref()
                         .and_then(|value| value.include_default_excluded)
                         .unwrap_or(false),
-                    max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
-                    default_exclude_components: self
-                        .state
-                        .config
-                        .default_exclude_components
-                        .clone(),
-                    forced_exclude_components: self.state.config.forced_exclude_components.clone(),
+                    max_index_file_size_bytes: settings.max_index_file_size_bytes,
+                    default_exclude_components: settings.default_exclude_components.clone(),
+                    forced_exclude_components: settings.forced_exclude_components.clone(),
                 },
             )?
         };
@@ -245,19 +242,23 @@ impl Runtime {
         language: Option<String>,
     ) -> SpikiResult<SemanticStatusOutput> {
         self.refresh_workspace(view, None)?;
+        let backends = if let Some(language) = language {
+            let backend = view
+                .workspace
+                .meta
+                .lock()
+                .semantic_backends
+                .get(&language)
+                .cloned()
+                .unwrap_or_else(|| backend_for_language(language));
+            vec![backend]
+        } else {
+            detected_backends(view)
+        };
+
         Ok(SemanticStatusOutput {
             workspace_id: view.workspace_id.clone(),
-            backends: match language {
-                Some(language) => {
-                    let meta = view.workspace.meta.lock();
-                    vec![meta
-                        .semantic_backends
-                        .get(&language)
-                        .cloned()
-                        .unwrap_or_else(|| backend_for_language(language))]
-                }
-                None => detected_backends(view),
-            },
+            backends,
         })
     }
 
@@ -267,26 +268,19 @@ impl Runtime {
         input: SemanticEnsureInput,
     ) -> SpikiResult<SemanticEnsureOutput> {
         self.refresh_workspace(view, None)?;
-        let action = input.action.unwrap_or_else(|| String::from("warm"));
-        if !matches!(action.as_str(), "warm" | "stop" | "refresh") {
-            return Err(super::error::spiki_error(
-                super::error::SpikiCode::InvalidRequest,
-                format!("Unsupported semantic action {}", action),
-            ));
-        }
-
         let mut backend = backend_for_language(input.language);
+        let action = input.action.unwrap_or_else(|| String::from("warm"));
         if action == "stop" {
             backend.state = String::from("off");
-            backend.idle_for_ms = Some(0);
         } else {
             backend.state = String::from("ready");
-            backend.idle_for_ms = Some(0);
         }
-
-        let mut meta = view.workspace.meta.lock();
-        meta.semantic_backends
+        view.workspace
+            .meta
+            .lock()
+            .semantic_backends
             .insert(backend.language.clone(), backend.clone());
+
         Ok(SemanticEnsureOutput {
             workspace_id: view.workspace_id.clone(),
             backend,

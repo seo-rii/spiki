@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::{LocationRef, Position, Warning};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendState {
@@ -41,4 +43,24 @@ pub struct SemanticStatusOutput {
 pub struct SemanticEnsureOutput {
     pub workspace_id: String,
     pub backend: BackendState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DefinitionInput {
+    pub language: String,
+    pub uri: String,
+    pub position: Position,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DefinitionOutput {
+    pub workspace_id: String,
+    pub workspace_revision: String,
+    pub engine: String,
+    pub backend: BackendState,
+    pub definitions: Vec<LocationRef>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<Warning>,
 }

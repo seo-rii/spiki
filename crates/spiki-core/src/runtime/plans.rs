@@ -8,8 +8,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::model::{
-    ApplyPlanInput, ApplyPlanOutput, DiscardPlanInput, DiscardPlanOutput, FileEdit, PlanSummary,
-    PreparePlanInput, PreparePlanOutput,
+    ApplyPlanInput, ApplyPlanOutput, DiscardPlanInput, DiscardPlanOutput, FileEdit,
+    InspectPlanInput, InspectPlanOutput, PlanSummary, PreparePlanInput, PreparePlanOutput,
 };
 use crate::text::{
     apply_edits_to_text, ensure_path_in_roots, fingerprint_for_file, path_from_file_uri,
@@ -365,6 +365,7 @@ impl Runtime {
         meta.plans.remove(&input.plan_id);
         meta.revision += 1;
         let next_revision = format!("rev_{}", meta.revision);
+        let settings = view.workspace.settings.lock().clone();
         meta.known_files = scan_workspace(
             &view.roots_canonical,
             None,
@@ -372,14 +373,17 @@ impl Runtime {
                 include_ignored: false,
                 include_generated: false,
                 include_default_excluded: false,
-                max_index_file_size_bytes: self.state.config.max_index_file_size_bytes,
-                default_exclude_components: self.state.config.default_exclude_components.clone(),
-                forced_exclude_components: self.state.config.forced_exclude_components.clone(),
+                max_index_file_size_bytes: settings.max_index_file_size_bytes,
+                default_exclude_components: settings.default_exclude_components.clone(),
+                forced_exclude_components: settings.forced_exclude_components.clone(),
             },
         )?
         .known_files
         .into_iter()
         .collect();
+        view.workspace
+            .dirty
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         Ok(ApplyPlanOutput {
             applied: true,
@@ -417,6 +421,44 @@ impl Runtime {
         })
     }
 
+    pub fn inspect_plan(
+        &self,
+        view: &ViewContext,
+        input: InspectPlanInput,
+    ) -> SpikiResult<InspectPlanOutput> {
+        self.refresh_workspace(view, None)?;
+        let mut meta = view.workspace.meta.lock();
+        Self::sweep_terminal_plans(&mut meta);
+        let plan = meta.plans.get(&input.plan_id).cloned().ok_or_else(|| {
+            spiki_error(
+                SpikiCode::NotFound,
+                format!("Plan {} not found", input.plan_id),
+            )
+        })?;
+        if plan.view_id != view.view_id {
+            return Err(spiki_error(
+                SpikiCode::Forbidden,
+                format!("Plan {} belongs to a different view", plan.plan_id),
+            ));
+        }
+        if plan.state != PlanState::Ready || plan.expires_at <= Utc::now() {
+            meta.plans.remove(&input.plan_id);
+            return Err(spiki_error(
+                SpikiCode::StalePlan,
+                format!("Plan {} is no longer available", input.plan_id),
+            ));
+        }
+
+        Ok(InspectPlanOutput {
+            plan_id: plan.plan_id,
+            workspace_id: view.workspace_id.clone(),
+            workspace_revision: plan.workspace_revision,
+            summary: plan._summary,
+            file_edits: plan.file_edits,
+            warnings: Vec::new(),
+        })
+    }
+
     pub fn seed_plan_for_test(
         &self,
         view: &ViewContext,
@@ -447,12 +489,13 @@ impl Runtime {
         summary: PlanSummary,
     ) -> SpikiResult<String> {
         let plan_id = format!("plan_{}", Uuid::now_v7().simple());
-        let plan_ttl = chrono::Duration::from_std(self.state.config.plan_ttl).map_err(|error| {
+        let settings = view.workspace.settings.lock().clone();
+        let plan_ttl = chrono::Duration::from_std(settings.plan_ttl).map_err(|error| {
             spiki_error(
                 SpikiCode::Internal,
                 format!(
                     "Configured plan_ttl {:?} is out of range for chrono duration conversion: {error}",
-                    self.state.config.plan_ttl
+                    settings.plan_ttl
                 ),
             )
         })?;
@@ -614,6 +657,7 @@ mod tests {
 
         let runtime = Runtime::new(RuntimeConfig {
             plan_ttl: Duration::MAX,
+            watch_enabled: false,
             ..RuntimeConfig::default()
         });
         let view = runtime

@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::protocol::{id_to_string, read_frame, write_frame};
+use crate::semantic::SemanticSupervisor;
 use crate::session::{handle_message, RootsState, Session};
 
 pub(crate) struct Args {
@@ -75,6 +76,7 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
             .collect();
     }
     let runtime = Runtime::new(runtime_config);
+    let semantic_supervisor = Arc::new(SemanticSupervisor::new());
     let (shutdown_tx, _) = broadcast::channel(2);
 
     let signal_task = tokio::spawn(wait_for_shutdown(shutdown_tx.clone()));
@@ -147,8 +149,9 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
                 let (stream, _) = accept?;
                 let session_runtime = runtime.clone();
                 let session_shutdown = shutdown_tx.subscribe();
+                let session_semantic = semantic_supervisor.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = handle_connection(stream, session_runtime, session_shutdown).await {
+                    if let Err(error) = handle_connection(stream, session_runtime, session_semantic, session_shutdown).await {
                         warn!("session ended with error: {error:#}");
                     }
                 });
@@ -182,8 +185,9 @@ pub(crate) async fn run(socket_path: PathBuf, runtime_dir: PathBuf) -> Result<()
                 }
                 let session_runtime = runtime.clone();
                 let session_shutdown = shutdown_tx.subscribe();
+                let session_semantic = semantic_supervisor.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = handle_connection(connected, session_runtime, session_shutdown).await {
+                    if let Err(error) = handle_connection(connected, session_runtime, session_semantic, session_shutdown).await {
                         warn!("session ended with error: {error:#}");
                     }
                 });
@@ -230,6 +234,7 @@ async fn wait_for_shutdown(shutdown_tx: broadcast::Sender<()>) {
 async fn handle_connection(
     stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
     runtime: Runtime,
+    semantic_supervisor: Arc<SemanticSupervisor>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     let (reader, writer) = split(stream);
@@ -256,6 +261,7 @@ async fn handle_connection(
         tasks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         next_request_id: std::sync::atomic::AtomicU64::new(1),
         protocol_version: tokio::sync::Mutex::new(String::from("2025-11-25")),
+        semantic_supervisor,
     });
     let request_session = session.clone();
     let request_task = tokio::spawn(async move {

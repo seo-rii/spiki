@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use notify::RecommendedWatcher;
 use parking_lot::Mutex;
 
 use crate::model::{BackendState, FileEdit, PlanSummary};
 use crate::text::{CanonicalRoot, KnownFile};
+
+use super::config::WorkspaceSettings;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -15,6 +19,7 @@ pub struct RuntimeConfig {
     pub plan_ttl: Duration,
     pub default_exclude_components: Vec<String>,
     pub forced_exclude_components: Vec<String>,
+    pub watch_enabled: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -34,11 +39,12 @@ impl Default for RuntimeConfig {
                 String::from("coverage"),
             ],
             forced_exclude_components: vec![String::from(".git")],
+            watch_enabled: true,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ViewContext {
     pub client_session_id: String,
     pub view_id: String,
@@ -48,21 +54,22 @@ pub struct ViewContext {
     pub(crate) workspace: Arc<WorkspaceState>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Runtime {
     pub(crate) state: Arc<RuntimeState>,
 }
 
-#[derive(Debug)]
 pub(crate) struct RuntimeState {
     pub(crate) config: RuntimeConfig,
     pub(crate) workspaces: Mutex<HashMap<String, Arc<WorkspaceState>>>,
 }
 
-#[derive(Debug)]
 pub(crate) struct WorkspaceState {
     pub(crate) _workspace_id: String,
     pub(crate) _roots: Vec<CanonicalRoot>,
+    pub(crate) settings: Mutex<WorkspaceSettings>,
+    pub(crate) watcher: Mutex<Option<RecommendedWatcher>>,
+    pub(crate) dirty: Arc<AtomicBool>,
     pub(crate) meta: Mutex<WorkspaceMeta>,
     pub(crate) write_lock: Mutex<()>,
 }

@@ -927,9 +927,11 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   assert.deepEqual(toolNames, [
     "ae.edit.apply_plan",
     "ae.edit.discard_plan",
+    "ae.edit.inspect_plan",
     "ae.edit.prepare_plan",
     "ae.semantic.ensure",
     "ae.semantic.status",
+    "ae.symbol.definition",
     "ae.workspace.read_spans",
     "ae.workspace.search_text",
     "ae.workspace.status"
@@ -1054,6 +1056,17 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   assert.equal(preparePlan.structuredContent.summary.filesTouched, 1);
   assert.equal(preparePlan.structuredContent.summary.edits, 1);
 
+  const inspectPlan = await client.request("tools/call", {
+    name: "ae.edit.inspect_plan",
+    arguments: {
+      planId: preparePlan.structuredContent.planId
+    }
+  });
+  assert.equal(inspectPlan.isError, false);
+  assert.equal(inspectPlan.structuredContent.planId, preparePlan.structuredContent.planId);
+  assert.equal(inspectPlan.structuredContent.fileEdits.length, 1);
+  assert.equal(inspectPlan.structuredContent.summary.edits, 1);
+
   const applyPreparedPlan = await client.request("tools/call", {
     name: "ae.edit.apply_plan",
     arguments: {
@@ -1116,4 +1129,102 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   });
   assert.equal(finalStatus.code, 0, finalStatus.stderr);
   assert.equal(JSON.parse(finalStatus.stdout).reachable, false);
+});
+
+test("spiki launcher supports configured lsp definition requests", { timeout: 60000 }, async (t) => {
+  const fakeLspPath = path.join(projectRoot, "tests", "lib", "fake-lsp-server.mjs");
+  const context = await createTestEnvironment({
+    prefix: "spiki-semantic-",
+    files: {
+      "src/index.ts": [
+        "export const answer = 42;",
+        "export function useAnswer() {",
+        "  return answer;",
+        "}",
+        ""
+      ].join("\n"),
+      "package.json": JSON.stringify(
+        {
+          dependencies: {
+            typescript: "5.8.0"
+          }
+        },
+        null,
+        2
+      ),
+      "spiki.languages.yaml": [
+        "bindings:",
+        "  typescript:",
+        "    kind: lsp",
+        "    provider: fake-typescript",
+        `    command: ${JSON.stringify(process.execPath)}`,
+        "    args:",
+        `      - ${JSON.stringify(fakeLspPath)}`
+      ].join("\n")
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await client.initialize();
+
+  const statusBefore = await client.request("tools/call", {
+    name: "ae.semantic.status",
+    arguments: {
+      language: "typescript"
+    }
+  });
+  assert.equal(statusBefore.isError, false);
+  assert.equal(statusBefore.structuredContent.backends[0].provider, "fake-typescript");
+  assert.equal(statusBefore.structuredContent.backends[0].state, "off");
+
+  const ensured = await client.request("tools/call", {
+    name: "ae.semantic.ensure",
+    arguments: {
+      language: "typescript",
+      action: "warm"
+    }
+  });
+  assert.equal(ensured.isError, false);
+  assert.equal(ensured.structuredContent.backend.provider, "fake-typescript");
+  assert.equal(ensured.structuredContent.backend.state, "ready");
+
+  const definition = await client.request("tools/call", {
+    name: "ae.symbol.definition",
+    arguments: {
+      language: "typescript",
+      uri: pathToFileURL(path.join(context.workspaceDir, "src", "index.ts")).toString(),
+      position: {
+        line: 2,
+        character: 10
+      }
+    }
+  });
+  assert.equal(definition.isError, false);
+  assert.equal(definition.structuredContent.backend.provider, "fake-typescript");
+  assert.equal(definition.structuredContent.definitions.length, 1);
+  assert.equal(
+    definition.structuredContent.definitions[0].uri,
+    pathToFileURL(path.join(context.workspaceDir, "src", "index.ts")).toString()
+  );
+  assert.deepEqual(definition.structuredContent.definitions[0].range, {
+    start: { line: 0, character: 13 },
+    end: { line: 0, character: 19 }
+  });
 });

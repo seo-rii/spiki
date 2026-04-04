@@ -2,8 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use schemars::{schema_for, JsonSchema};
 use serde_json::{json, Map, Value};
 use spiki_core::{
-    ApplyPlanInput, DiscardPlanInput, ExecutionError, PreparePlanInput, ReadSpansInput, Runtime,
-    SearchTextInput, SemanticEnsureInput, SemanticStatusInput, WorkspaceStatusInput,
+    ApplyPlanInput, DefinitionInput, DiscardPlanInput, ExecutionError, InspectPlanInput,
+    PreparePlanInput, ReadSpansInput, Runtime, SearchTextInput, SemanticEnsureInput,
+    SemanticStatusInput, WorkspaceStatusInput,
 };
 
 use crate::session::Session;
@@ -14,10 +15,12 @@ enum ToolKind {
     ReadSpans,
     SearchText,
     PreparePlan,
+    InspectPlan,
     ApplyPlan,
     DiscardPlan,
     SemanticStatus,
     SemanticEnsure,
+    SymbolDefinition,
 }
 
 struct ToolDefinition {
@@ -58,6 +61,13 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         task_support: None,
     },
     ToolDefinition {
+        kind: ToolKind::InspectPlan,
+        name: "ae.edit.inspect_plan",
+        title: "Inspect Plan",
+        description: "Read a prepared edit plan before deciding whether to apply or discard it.",
+        task_support: None,
+    },
+    ToolDefinition {
         kind: ToolKind::ApplyPlan,
         name: "ae.edit.apply_plan",
         title: "Apply Plan",
@@ -75,14 +85,21 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         kind: ToolKind::SemanticStatus,
         name: "ae.semantic.status",
         title: "Semantic Status",
-        description: "Return detected leaf semantic backends and their current skeleton lifecycle state for the active workspace.",
+        description: "Return detected leaf semantic backends and their current lifecycle state for the active workspace.",
         task_support: None,
     },
     ToolDefinition {
         kind: ToolKind::SemanticEnsure,
         name: "ae.semantic.ensure",
         title: "Semantic Ensure",
-        description: "Warm, stop, or refresh the skeleton semantic backend state cache for a language profile.",
+        description: "Warm, stop, or refresh the configured semantic backend for a language profile.",
+        task_support: None,
+    },
+    ToolDefinition {
+        kind: ToolKind::SymbolDefinition,
+        name: "ae.symbol.definition",
+        title: "Symbol Definition",
+        description: "Resolve symbol definitions through a configured semantic backend.",
         task_support: None,
     },
 ];
@@ -209,6 +226,19 @@ pub(crate) async fn handle_tool_call(
             },
             Err(error) => tool_failure(invalid_arguments(error)),
         },
+        ToolKind::InspectPlan => match serde_json::from_value::<InspectPlanInput>(arguments) {
+            Ok(input) => match session.runtime.inspect_plan(&view, input) {
+                Ok(output) => tool_success(
+                    format!(
+                        "plan {} touches {} files",
+                        output.plan_id, output.summary.files_touched
+                    ),
+                    serde_json::to_value(output)?,
+                ),
+                Err(error) => tool_failure(Runtime::execution_error(error)),
+            },
+            Err(error) => tool_failure(invalid_arguments(error)),
+        },
         ToolKind::ApplyPlan => match serde_json::from_value::<ApplyPlanInput>(arguments) {
             Ok(input) => match session.runtime.apply_plan(&view, input) {
                 Ok(output) => tool_success(
@@ -231,19 +261,27 @@ pub(crate) async fn handle_tool_call(
         },
         ToolKind::SemanticStatus => {
             match serde_json::from_value::<SemanticStatusInput>(arguments) {
-                Ok(input) => match session.runtime.semantic_status(&view, input.language) {
+                Ok(input) => match session
+                    .semantic_supervisor
+                    .status(&session.runtime, &view, input.language)
+                    .await
+                {
                     Ok(output) => tool_success(
                         format!("{} semantic backends tracked", output.backends.len()),
                         serde_json::to_value(output)?,
                     ),
-                    Err(error) => tool_failure(Runtime::execution_error(error)),
+                    Err(error) => tool_failure(semantic_error(error.to_string())),
                 },
                 Err(error) => tool_failure(invalid_arguments(error)),
             }
         }
         ToolKind::SemanticEnsure => {
             match serde_json::from_value::<SemanticEnsureInput>(arguments) {
-                Ok(input) => match session.runtime.semantic_ensure(&view, input) {
+                Ok(input) => match session
+                    .semantic_supervisor
+                    .ensure(&session.runtime, &view, input)
+                    .await
+                {
                     Ok(output) => tool_success(
                         format!(
                             "semantic backend {} is {}",
@@ -251,7 +289,23 @@ pub(crate) async fn handle_tool_call(
                         ),
                         serde_json::to_value(output)?,
                     ),
-                    Err(error) => tool_failure(Runtime::execution_error(error)),
+                    Err(error) => tool_failure(semantic_error(error.to_string())),
+                },
+                Err(error) => tool_failure(invalid_arguments(error)),
+            }
+        }
+        ToolKind::SymbolDefinition => {
+            match serde_json::from_value::<DefinitionInput>(arguments) {
+                Ok(input) => match session
+                    .semantic_supervisor
+                    .definition(&session.runtime, &view, input)
+                    .await
+                {
+                    Ok(output) => tool_success(
+                        format!("resolved {} definition locations", output.definitions.len()),
+                        serde_json::to_value(output)?,
+                    ),
+                    Err(error) => tool_failure(semantic_error(error.to_string())),
                 },
                 Err(error) => tool_failure(invalid_arguments(error)),
             }
@@ -316,12 +370,14 @@ fn input_schema_for(kind: ToolKind) -> Value {
         ToolKind::ReadSpans => read_spans_schema(),
         ToolKind::SearchText => search_text_schema(),
         ToolKind::PreparePlan => prepare_plan_schema(),
+        ToolKind::InspectPlan => generated_schema::<InspectPlanInput>("inspect plan schema"),
         ToolKind::ApplyPlan => generated_schema::<ApplyPlanInput>("apply plan schema"),
         ToolKind::DiscardPlan => generated_schema::<DiscardPlanInput>("discard plan schema"),
         ToolKind::SemanticStatus => {
             generated_schema::<SemanticStatusInput>("semantic status schema")
         }
         ToolKind::SemanticEnsure => semantic_ensure_schema(),
+        ToolKind::SymbolDefinition => generated_schema::<DefinitionInput>("definition schema"),
     }
 }
 
@@ -452,6 +508,15 @@ fn invalid_request_message(message: impl Into<String>) -> ExecutionError {
     ExecutionError {
         code: String::from("AE_INVALID_REQUEST"),
         message: message.into(),
+        retryable: false,
+        details: None,
+    }
+}
+
+fn semantic_error(message: String) -> ExecutionError {
+    ExecutionError {
+        code: String::from("AE_SEMANTIC_ERROR"),
+        message,
         retryable: false,
         details: None,
     }

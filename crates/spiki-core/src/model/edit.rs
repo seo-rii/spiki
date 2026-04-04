@@ -50,6 +50,24 @@ pub struct PreparePlanOutput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InspectPlanInput {
+    pub plan_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectPlanOutput {
+    pub plan_id: String,
+    pub workspace_id: String,
+    pub workspace_revision: String,
+    pub summary: PlanSummary,
+    pub file_edits: Vec<FileEdit>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<Warning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApplyPlanInput {
     pub plan_id: String,
     pub expected_workspace_revision: String,

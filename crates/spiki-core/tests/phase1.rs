@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use spiki_core::model::{FileEdit, Position, Range, Scope, SemanticEnsureInput, TextEdit};
@@ -254,6 +256,7 @@ fn workspace_status_can_index_paths_removed_from_default_excludes() {
         plan_ttl: std::time::Duration::from_secs(30 * 60),
         default_exclude_components: Vec::new(),
         forced_exclude_components: vec![String::from(".git")],
+        watch_enabled: false,
     });
     let view = runtime
         .upsert_view("session_test", &[file_uri_from_path(temp.path())])
@@ -586,6 +589,7 @@ fn expired_plans_are_swept_on_subsequent_plan_activity() {
 
     let runtime = Runtime::new(RuntimeConfig {
         plan_ttl: std::time::Duration::from_millis(10),
+        watch_enabled: false,
         ..Default::default()
     });
     let view = runtime
@@ -1561,5 +1565,171 @@ fn semantic_ensure_supports_general_language_profiles() {
             Some(expected_provider.as_str())
         );
         assert_eq!(output.backend.state, "ready");
+    }
+}
+
+#[test]
+fn inspect_plan_returns_prepared_plan_details() {
+    let temp = tempdir().unwrap();
+    let file_path = temp.path().join("app.ts");
+    fs::write(&file_path, "export const value = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let prepared = runtime
+        .prepare_plan(
+            &view,
+            PreparePlanInput {
+                file_edits: vec![FileEdit {
+                    uri: file_uri_from_path(&file_path),
+                    fingerprint: None,
+                    edits: vec![TextEdit {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 13,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 18,
+                            },
+                        },
+                        new_text: String::from("answer"),
+                    }],
+                }],
+            },
+        )
+        .unwrap();
+
+    let inspected = runtime
+        .inspect_plan(
+            &view,
+            spiki_core::InspectPlanInput {
+                plan_id: prepared.plan_id.clone(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(inspected.plan_id, prepared.plan_id);
+    assert_eq!(inspected.workspace_revision, prepared.workspace_revision);
+    assert_eq!(inspected.summary.files_touched, 1);
+    assert_eq!(inspected.summary.edits, 1);
+    assert_eq!(inspected.file_edits.len(), 1);
+    assert_eq!(inspected.file_edits[0].edits.len(), 1);
+}
+
+#[test]
+fn workspace_settings_load_project_runtime_and_language_yaml() {
+    let temp = tempdir().unwrap();
+    fs::write(
+        temp.path().join("spiki.yaml"),
+        [
+            "runtime:",
+            "  maxIndexFileSizeBytes: 64",
+            "  planTtlSeconds: 15",
+            "  defaultExcludeComponents:",
+            "    - dist",
+            "    - generated",
+            "  forcedExcludeComponents:",
+            "    - .git",
+            "    - private",
+            "  watch: false",
+            ""
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("spiki.languages.yaml"),
+        [
+            "bindings:",
+            "  typescript:",
+            "    kind: lsp",
+            "    provider: custom-typescript",
+            "    command: node",
+            "    args:",
+            "      - fake-language-server.js",
+            "    env:",
+            "      FAKE_MODE: enabled",
+            ""
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+    let settings = runtime.workspace_settings(&view);
+    let binding = runtime.workspace_semantic_binding(&view, "typescript").unwrap();
+
+    assert_eq!(settings.max_index_file_size_bytes, 64);
+    assert_eq!(settings.plan_ttl, Duration::from_secs(15));
+    assert_eq!(
+        settings.default_exclude_components,
+        vec![String::from("dist"), String::from("generated")]
+    );
+    assert_eq!(
+        settings.forced_exclude_components,
+        vec![String::from(".git"), String::from("private")]
+    );
+    assert!(!settings.watch_enabled);
+    assert_eq!(binding.provider_id, "custom-typescript");
+    assert_eq!(binding.command.as_deref(), Some("node"));
+    assert_eq!(binding.args, vec![String::from("fake-language-server.js")]);
+    assert_eq!(
+        binding.env.get("FAKE_MODE").map(String::as_str),
+        Some("enabled")
+    );
+}
+
+#[test]
+fn watcher_marks_workspace_dirty_when_new_files_appear() {
+    let temp = tempdir().unwrap();
+    fs::write(temp.path().join("a.ts"), "export const first = 1;\n").unwrap();
+
+    let runtime = Runtime::new(Default::default());
+    let view = runtime
+        .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+        .unwrap();
+
+    let initial = runtime
+        .workspace_status(
+            &view,
+            WorkspaceStatusInput {
+                include_backends: Some(false),
+                include_coverage: Some(true),
+            },
+        )
+        .unwrap();
+    assert_eq!(initial.workspace_revision, "rev_1");
+    assert_eq!(initial.coverage.unwrap().files_indexed, Some(1));
+
+    fs::write(temp.path().join("b.ts"), "export const second = 2;\n").unwrap();
+
+    let started_at = Instant::now();
+    loop {
+        let status = runtime
+            .workspace_status(
+                &view,
+                WorkspaceStatusInput {
+                    include_backends: Some(false),
+                    include_coverage: Some(true),
+                },
+            )
+            .unwrap();
+        if status.workspace_revision != "rev_1" {
+            assert_eq!(status.workspace_revision, "rev_2");
+            assert_eq!(status.coverage.unwrap().files_indexed, Some(2));
+            break;
+        }
+        if started_at.elapsed() > Duration::from_secs(5) {
+            panic!("workspace watcher did not invalidate the index after file creation");
+        }
+        thread::sleep(Duration::from_millis(50));
     }
 }

@@ -1,5 +1,6 @@
 mod app;
 mod protocol;
+mod semantic;
 mod session;
 mod tools;
 
