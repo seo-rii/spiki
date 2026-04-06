@@ -255,11 +255,24 @@ test("spiki launcher handles pipelined initialize and first tool call", { timeou
 
   const initialize = await initializePromise;
   const workspaceStatus = await workspaceStatusPromise;
+  const toolsList = await client.request("tools/list");
   client.notify("notifications/initialized");
 
   assert.equal(initialize.serverInfo.name, "spiki");
+  assert.equal(initialize.serverInfo.title, "spiki");
+  assert.equal(initialize.serverInfo.websiteUrl, "https://github.com/seo-rii/spiki");
+  assert.deepEqual(initialize.capabilities.experimental.spikiPluginScaffold.clients, ["codex", "claude"]);
   assert.equal(workspaceStatus.isError, false);
   assert.equal(workspaceStatus.structuredContent.workspaceRevision, "rev_1");
+
+  const workspaceTool = toolsList.tools.find((tool) => tool.name === "ae.workspace.status");
+  const applyTool = toolsList.tools.find((tool) => tool.name === "ae.edit.apply_plan");
+  assert.ok(workspaceTool, `missing workspace status tool in ${JSON.stringify(toolsList)}`);
+  assert.ok(applyTool, `missing apply plan tool in ${JSON.stringify(toolsList)}`);
+  assert.equal(workspaceTool.annotations.readOnlyHint, true);
+  assert.equal(workspaceTool.annotations.openWorldHint, false);
+  assert.equal(workspaceTool.outputSchema.properties.workspaceRevision.type, "string");
+  assert.equal(applyTool.annotations.destructiveHint, true);
 });
 
 test("spiki launcher refuses to spawn over a live unreachable daemon pid", { timeout: 60000 }, async (t) => {
@@ -445,20 +458,17 @@ test("spiki launcher negotiates the server protocol version during initialize", 
   client.notify("notifications/initialized");
 
   assert.equal(initialize.protocolVersion, "2025-11-25");
-  assert.deepEqual(initialize.capabilities, {
-    tools: {
-      listChanged: false
-    },
-    tasks: {
-      list: {},
-      cancel: {},
-      requests: {
-        tools: {
-          call: {}
-        }
+  assert.equal(initialize.capabilities.tools.listChanged, false);
+  assert.deepEqual(initialize.capabilities.tasks, {
+    list: {},
+    cancel: {},
+    requests: {
+      tools: {
+        call: {}
       }
     }
   });
+  assert.deepEqual(initialize.capabilities.experimental.spikiPluginScaffold.clients, ["codex", "claude"]);
 });
 
 test("spiki launcher can allow roots-less initialize with explicit opt-in", { timeout: 60000, concurrency: false }, async (t) => {
@@ -883,20 +893,17 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
 
   const initialize = await client.initialize();
   assert.equal(initialize.serverInfo.name, "spiki");
-  assert.deepEqual(initialize.capabilities, {
-    tools: {
-      listChanged: false
-    },
-    tasks: {
-      list: {},
-      cancel: {},
-      requests: {
-        tools: {
-          call: {}
-        }
+  assert.equal(initialize.capabilities.tools.listChanged, false);
+  assert.deepEqual(initialize.capabilities.tasks, {
+    list: {},
+    cancel: {},
+    requests: {
+      tools: {
+        call: {}
       }
     }
   });
+  assert.deepEqual(initialize.capabilities.experimental.spikiPluginScaffold.clients, ["codex", "claude"]);
   if (process.platform !== "win32") {
     const runtimeDirStat = await stat(context.runtimeDir);
     const pidFileStat = await stat(path.join(context.runtimeDir, "daemon.pid"));

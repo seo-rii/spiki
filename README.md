@@ -7,6 +7,7 @@ The current codebase implements the Phase 1 slice of [SPEC.md](./SPEC.md): works
 ## Highlights
 
 - Node.js launcher with MCP stdio bridging and on-demand daemon startup
+- Plugin scaffold command for Codex and Claude bundles rooted at the current checkout
 - Rust daemon with shared workspace/runtime state across requests
 - Local transport over Unix domain sockets on Unix-like hosts and current-user-scoped named pipes on Windows
 - Ignore-aware workspace scanning, exact span reads, and text search
@@ -62,6 +63,15 @@ If you need to support a roots-less client, opt in explicitly with `SPIKI_ALLOW_
 Default exclude components such as `dist`, `target`, or `coverage` are configurable defaults, not forced hides.
 Use `scope.includeDefaultExcluded=true` for one search, or set `SPIKI_DEFAULT_EXCLUDE_COMPONENTS` / `SPIKI_FORCED_EXCLUDE_COMPONENTS` on the daemon process for global policy changes.
 
+### Scaffold a plugin bundle
+
+```bash
+node ./bin/spiki.js plugin scaffold codex ./tmp/spiki-codex-plugin
+node ./bin/spiki.js plugin scaffold claude ./tmp/spiki-claude-plugin
+```
+
+The scaffold command writes plugin manifests plus a `.mcp.json` that targets the current checkout's launcher path. Add `--allow-cwd-root-fallback` when you need a bundle for clients that do not send MCP roots.
+
 ### Intended npm surface
 
 The launcher package is prepared to publish as `spiki`.
@@ -91,6 +101,7 @@ Repository checkouts still support source-build fallback through Cargo when no p
 - Phase 1 focuses on reliable text and workspace operations.
 - Semantic lifecycle support is shallow by default, but custom LSP bindings can now service `ae.symbol.definition`.
 - The current advertised server capability surface includes tools plus MCP tasks for `tools/call`; task-augmented execution is currently exposed for `ae.workspace.search_text`, while resources remain out of scope for this phase.
+- `initialize` now advertises richer `serverInfo` metadata plus a small `experimental.spikiPluginScaffold` capability for plugin-aware clients, and `tools/list` includes output schemas plus behavioral annotations.
 - Roots-less clients are rejected by default to avoid implicit ACL expansion; the current launcher only allows `cwd` fallback behind `SPIKI_ALLOW_CWD_ROOT_FALLBACK=1`.
 - The specification is intentionally ahead of the current implementation in some areas.
 - Project-level overrides live in `spiki.yaml`, `.spiki/config.yaml`, `spiki.languages.yaml`, and `.spiki/languages.yaml`.

@@ -48,7 +48,7 @@
     "prepack": "npm run prepare:package",
     "postpack": "node ./scripts/cleanup-package.mjs",
     "test": "npm run test:ci",
-    "test:ci": "node --test --test-concurrency=1 ./tests/bootstrap-race.test.mjs ./tests/package-metadata.test.mjs ./tests/program-exec.test.mjs ./tests/runtime-paths.test.mjs",
+    "test:ci": "node --test --test-concurrency=1 ./tests/bootstrap-race.test.mjs ./tests/package-metadata.test.mjs ./tests/plugin-scaffold.test.mjs ./tests/program-exec.test.mjs ./tests/runtime-paths.test.mjs",
     "test:smoke": "node --test ./tests/program-exec.test.mjs",
     "test:codex": "node --test ./tests/codex-integration.test.mjs",
     "test:integration": "node --test ./tests/*.test.mjs",

@@ -19,7 +19,7 @@ pub struct FileEdit {
     pub edits: Vec<TextEdit>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanSummary {
     pub files_touched: u64,
@@ -37,7 +37,7 @@ pub struct PreparePlanInput {
     pub file_edits: Vec<FileEdit>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparePlanOutput {
     pub plan_id: String,
@@ -54,7 +54,7 @@ pub struct InspectPlanInput {
     pub plan_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InspectPlanOutput {
     pub plan_id: String,
@@ -73,7 +73,7 @@ pub struct ApplyPlanInput {
     pub expected_workspace_revision: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPlanOutput {
     pub applied: bool,
@@ -92,7 +92,7 @@ pub struct DiscardPlanInput {
     pub plan_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscardPlanOutput {
     pub discarded: bool,

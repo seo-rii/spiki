@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{BackendState, FileFingerprint, Range, Warning};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TextSpan {
     pub uri: String,
@@ -17,7 +17,7 @@ pub struct TextSpan {
     pub fingerprint: Option<FileFingerprint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Coverage {
     pub partial: bool,
@@ -53,7 +53,7 @@ pub struct WorkspaceStatusInput {
     pub include_coverage: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceStatusOutput {
     pub client_session_id: String,
@@ -84,7 +84,7 @@ pub struct ReadSpansInput {
     pub spans: Vec<ReadSpanRequest>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadSpansOutput {
     pub workspace_revision: String,

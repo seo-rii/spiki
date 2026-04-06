@@ -96,6 +96,15 @@ npm run test:codex
 
 `test:codex` uses the system `codex` binary when available and falls back to `npx @openai/codex` otherwise.
 
+### Plugin scaffold
+
+```bash
+node ./bin/spiki.js plugin scaffold codex ./tmp/spiki-codex-plugin
+node ./bin/spiki.js plugin scaffold claude ./tmp/spiki-claude-plugin
+```
+
+Use `--allow-cwd-root-fallback` when you need a generated bundle to expose the current working directory as an implicit root for clients that do not send `initialize.params.roots`.
+
 ### Full integration pass
 
 ```bash

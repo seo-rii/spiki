@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Coverage, FileFingerprint, Range, Scope, Warning};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TextMatch {
     pub uri: String,
@@ -40,7 +40,7 @@ pub struct SearchTextInput {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchTextOutput {
     pub workspace_revision: String,

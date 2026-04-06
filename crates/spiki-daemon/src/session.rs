@@ -163,7 +163,10 @@ async fn handle_request(
         "spiki/bootstrap_status" => Ok(json!({
             "serverInfo": {
                 "name": SPIKI_SERVER_NAME,
-                "version": SPIKI_SERVER_VERSION
+                "version": SPIKI_SERVER_VERSION,
+                "title": "spiki",
+                "description": "Editor-oriented MCP workspace runtime",
+                "websiteUrl": "https://github.com/seo-rii/spiki"
             },
             "protocolVersion": SPIKI_PROTOCOL_VERSION,
             "bootstrapVersion": SPIKI_BOOTSTRAP_VERSION
@@ -230,13 +233,22 @@ async fn handle_initialize(session: &Arc<Session>, params: Value) -> Result<Valu
                         "call": {}
                     }
                 }
+            },
+            "experimental": {
+                "spikiPluginScaffold": {
+                    "clients": ["codex", "claude"],
+                    "version": 1
+                }
             }
         },
         "serverInfo": {
             "name": SPIKI_SERVER_NAME,
-            "version": SPIKI_SERVER_VERSION
+            "version": SPIKI_SERVER_VERSION,
+            "title": "spiki",
+            "description": "Editor-oriented MCP workspace runtime",
+            "websiteUrl": "https://github.com/seo-rii/spiki"
         },
-        "instructions": "spiki Phase 1 exposes text-first workspace tools and safe apply skeletons."
+        "instructions": "spiki Phase 1 exposes text-first workspace tools, output schemas, and plugin-friendly metadata for Codex and Claude integrations."
     }))
 }
 

@@ -2,9 +2,11 @@ use anyhow::{anyhow, Context, Result};
 use schemars::{schema_for, JsonSchema};
 use serde_json::{json, Map, Value};
 use spiki_core::{
-    ApplyPlanInput, DefinitionInput, DiscardPlanInput, ExecutionError, InspectPlanInput,
-    PreparePlanInput, ReadSpansInput, Runtime, SearchTextInput, SemanticEnsureInput,
-    SemanticStatusInput, WorkspaceStatusInput,
+    ApplyPlanInput, ApplyPlanOutput, DefinitionInput, DefinitionOutput, DiscardPlanInput,
+    DiscardPlanOutput, ExecutionError, InspectPlanInput, InspectPlanOutput, PreparePlanInput,
+    PreparePlanOutput, ReadSpansInput, ReadSpansOutput, Runtime, SearchTextInput, SearchTextOutput,
+    SemanticEnsureInput, SemanticEnsureOutput, SemanticStatusInput, SemanticStatusOutput,
+    WorkspaceStatusInput, WorkspaceStatusOutput,
 };
 
 use crate::session::Session;
@@ -28,6 +30,9 @@ struct ToolDefinition {
     name: &'static str,
     title: &'static str,
     description: &'static str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
     task_support: Option<&'static str>,
 }
 
@@ -37,6 +42,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.workspace.status",
         title: "Workspace Status",
         description: "Summarize the active view, workspace revision, coverage, and backend state.",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
         task_support: None,
     },
     ToolDefinition {
@@ -44,6 +52,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.workspace.read_spans",
         title: "Read Spans",
         description: "Read precise file spans with optional surrounding context.",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
         task_support: None,
     },
     ToolDefinition {
@@ -51,6 +62,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.workspace.search_text",
         title: "Search Text",
         description: "Run ignore-aware literal, regex, or whole-word text search.",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
         task_support: Some("optional"),
     },
     ToolDefinition {
@@ -58,6 +72,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.edit.prepare_plan",
         title: "Prepare Plan",
         description: "Validate and store a new edit plan for later apply or discard.",
+        read_only: false,
+        destructive: false,
+        idempotent: false,
         task_support: None,
     },
     ToolDefinition {
@@ -65,6 +82,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.edit.inspect_plan",
         title: "Inspect Plan",
         description: "Read a prepared edit plan before deciding whether to apply or discard it.",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
         task_support: None,
     },
     ToolDefinition {
@@ -72,6 +92,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.edit.apply_plan",
         title: "Apply Plan",
         description: "Apply a previously prepared edit plan after CAS validation.",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
         task_support: None,
     },
     ToolDefinition {
@@ -79,6 +102,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.edit.discard_plan",
         title: "Discard Plan",
         description: "Discard a stored edit plan without applying it.",
+        read_only: false,
+        destructive: false,
+        idempotent: true,
         task_support: None,
     },
     ToolDefinition {
@@ -86,6 +112,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.semantic.status",
         title: "Semantic Status",
         description: "Return detected leaf semantic backends and their current lifecycle state for the active workspace.",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
         task_support: None,
     },
     ToolDefinition {
@@ -93,6 +122,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.semantic.ensure",
         title: "Semantic Ensure",
         description: "Warm, stop, or refresh the configured semantic backend for a language profile.",
+        read_only: false,
+        destructive: false,
+        idempotent: false,
         task_support: None,
     },
     ToolDefinition {
@@ -100,6 +132,9 @@ const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         name: "ae.symbol.definition",
         title: "Symbol Definition",
         description: "Resolve symbol definitions through a configured semantic backend.",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
         task_support: None,
     },
 ];
@@ -294,22 +329,20 @@ pub(crate) async fn handle_tool_call(
                 Err(error) => tool_failure(invalid_arguments(error)),
             }
         }
-        ToolKind::SymbolDefinition => {
-            match serde_json::from_value::<DefinitionInput>(arguments) {
-                Ok(input) => match session
-                    .semantic_supervisor
-                    .definition(&session.runtime, &view, input)
-                    .await
-                {
-                    Ok(output) => tool_success(
-                        format!("resolved {} definition locations", output.definitions.len()),
-                        serde_json::to_value(output)?,
-                    ),
-                    Err(error) => tool_failure(semantic_error(error.to_string())),
-                },
-                Err(error) => tool_failure(invalid_arguments(error)),
-            }
-        }
+        ToolKind::SymbolDefinition => match serde_json::from_value::<DefinitionInput>(arguments) {
+            Ok(input) => match session
+                .semantic_supervisor
+                .definition(&session.runtime, &view, input)
+                .await
+            {
+                Ok(output) => tool_success(
+                    format!("resolved {} definition locations", output.definitions.len()),
+                    serde_json::to_value(output)?,
+                ),
+                Err(error) => tool_failure(semantic_error(error.to_string())),
+            },
+            Err(error) => tool_failure(invalid_arguments(error)),
+        },
     };
 
     if session.is_operation_cancelled(request_id).await {
@@ -338,7 +371,14 @@ pub(crate) fn tool_specs() -> Vec<Value> {
                 "name": definition.name,
                 "title": definition.title,
                 "description": definition.description,
-                "inputSchema": input_schema_for(definition.kind)
+                "inputSchema": input_schema_for(definition.kind),
+                "outputSchema": output_schema_for(definition.kind),
+                "annotations": {
+                    "readOnlyHint": definition.read_only,
+                    "destructiveHint": definition.destructive,
+                    "idempotentHint": definition.idempotent,
+                    "openWorldHint": false
+                }
             });
             if let Some(task_support) = definition.task_support {
                 tool["execution"] = json!({
@@ -378,6 +418,35 @@ fn input_schema_for(kind: ToolKind) -> Value {
         }
         ToolKind::SemanticEnsure => semantic_ensure_schema(),
         ToolKind::SymbolDefinition => generated_schema::<DefinitionInput>("definition schema"),
+    }
+}
+
+fn output_schema_for(kind: ToolKind) -> Value {
+    match kind {
+        ToolKind::WorkspaceStatus => {
+            generated_schema::<WorkspaceStatusOutput>("workspace status output schema")
+        }
+        ToolKind::ReadSpans => generated_schema::<ReadSpansOutput>("read spans output schema"),
+        ToolKind::SearchText => generated_schema::<SearchTextOutput>("search text output schema"),
+        ToolKind::PreparePlan => {
+            generated_schema::<PreparePlanOutput>("prepare plan output schema")
+        }
+        ToolKind::InspectPlan => {
+            generated_schema::<InspectPlanOutput>("inspect plan output schema")
+        }
+        ToolKind::ApplyPlan => generated_schema::<ApplyPlanOutput>("apply plan output schema"),
+        ToolKind::DiscardPlan => {
+            generated_schema::<DiscardPlanOutput>("discard plan output schema")
+        }
+        ToolKind::SemanticStatus => {
+            generated_schema::<SemanticStatusOutput>("semantic status output schema")
+        }
+        ToolKind::SemanticEnsure => {
+            generated_schema::<SemanticEnsureOutput>("semantic ensure output schema")
+        }
+        ToolKind::SymbolDefinition => {
+            generated_schema::<DefinitionOutput>("definition output schema")
+        }
     }
 }
 
@@ -620,6 +689,21 @@ mod tests {
             semantic_ensure_schema["properties"]["action"]["default"],
             json!("warm")
         );
+
+        let workspace_status = find_tool(&tools, "ae.workspace.status");
+        assert_eq!(workspace_status["annotations"]["readOnlyHint"], json!(true));
+        assert_eq!(
+            workspace_status["annotations"]["openWorldHint"],
+            json!(false)
+        );
+        assert_eq!(
+            workspace_status["outputSchema"]["properties"]["workspaceRevision"]["type"],
+            json!("string")
+        );
+
+        let apply_plan = find_tool(&tools, "ae.edit.apply_plan");
+        assert_eq!(apply_plan["annotations"]["destructiveHint"], json!(true));
+        assert_eq!(apply_plan["annotations"]["idempotentHint"], json!(false));
     }
 
     #[test]

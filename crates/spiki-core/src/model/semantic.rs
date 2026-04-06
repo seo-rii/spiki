@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{LocationRef, Position, Warning};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendState {
     pub language: String,
@@ -31,14 +31,14 @@ pub struct SemanticStatusInput {
     pub language: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticStatusOutput {
     pub workspace_id: String,
     pub backends: Vec<BackendState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticEnsureOutput {
     pub workspace_id: String,
@@ -53,7 +53,7 @@ pub struct DefinitionInput {
     pub position: Position,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DefinitionOutput {
     pub workspace_id: String,
