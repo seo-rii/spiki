@@ -20,6 +20,8 @@ const SPIKI_SERVER_VERSION: &str = "0.1.0-dev";
 const SPIKI_PROTOCOL_VERSION: &str = "2025-11-25";
 const SPIKI_BOOTSTRAP_VERSION: u32 = 1;
 const DEFAULT_TASK_TTL_MS: u64 = 60_000;
+const MIN_TASK_TTL_MS: u64 = 1_000;
+const MAX_TASK_TTL_MS: u64 = 3_600_000;
 const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 500;
 const RELATED_TASK_META_KEY: &str = "io.modelcontextprotocol/related-task";
 const MODEL_IMMEDIATE_RESPONSE_META_KEY: &str = "io.modelcontextprotocol/model-immediate-response";
@@ -277,7 +279,7 @@ async fn handle_tools_call_request(
 
         let task = session
             .create_task_snapshot(task_request.ttl, Some(format!("Running {name}")))
-            .await;
+            .await?;
         let task_id = task.task_id.clone();
         let background_task_id = task_id.clone();
         params
@@ -415,11 +417,17 @@ impl Session {
         &self,
         requested_ttl: Option<u64>,
         status_message: Option<String>,
-    ) -> TaskSnapshot {
+    ) -> Result<TaskSnapshot> {
         let mut tasks = self.tasks.lock().await;
         sweep_expired_tasks(&mut tasks);
         let now = Instant::now();
-        let ttl = Some(requested_ttl.unwrap_or(DEFAULT_TASK_TTL_MS));
+        let ttl_value = requested_ttl.unwrap_or(DEFAULT_TASK_TTL_MS);
+        if !(MIN_TASK_TTL_MS..=MAX_TASK_TTL_MS).contains(&ttl_value) {
+            return Err(anyhow!(
+                "invalid params: task.ttl must be between {MIN_TASK_TTL_MS} and {MAX_TASK_TTL_MS} milliseconds"
+            ));
+        }
+        let ttl = Some(ttl_value);
         let timestamp = timestamp_now();
         let task = TaskSnapshot {
             task_id: Uuid::now_v7().to_string(),
@@ -441,7 +449,7 @@ impl Session {
         );
         drop(tasks);
         self.publish_task_status(&task).await;
-        task
+        Ok(task)
     }
 
     pub(crate) async fn list_tasks(&self, cursor: Option<String>) -> Vec<TaskSnapshot> {

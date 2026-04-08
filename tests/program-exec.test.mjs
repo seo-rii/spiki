@@ -718,6 +718,69 @@ test("spiki launcher supports task-augmented search_text requests", { timeout: 6
   assert.equal(progressNotifications[0].params._meta[RELATED_TASK_META_KEY].taskId, taskId);
 });
 
+test("spiki launcher rejects out-of-range task ttl values", { timeout: 60000 }, async (t) => {
+  const context = await createTestEnvironment({
+    prefix: "spiki-task-ttl-",
+    files: {
+      "index.ts": "const needle = 1;\n"
+    }
+  });
+  t.after(async () => {
+    await runProcess(process.execPath, ["./bin/spiki.js", "daemon", "stop"], {
+      cwd: projectRoot,
+      env: context.env,
+      timeoutMs: 5000
+    }).catch(() => {});
+    await context.cleanup();
+  });
+
+  const child = spawn(process.execPath, ["./bin/spiki.js"], {
+    cwd: projectRoot,
+    env: context.env,
+    stdio: ["pipe", "pipe", "inherit"]
+  });
+  const client = new McpLauncherClient(child, context.rootUri);
+  t.after(async () => {
+    await client.close().catch(() => {});
+  });
+
+  await client.initialize();
+
+  await assert.rejects(
+    client.request("tools/call", {
+      name: "ae.workspace.search_text",
+      arguments: {
+        query: "needle",
+        mode: "literal",
+        limit: 10
+      },
+      task: {
+        ttl: 0
+      }
+    }),
+    (error) =>
+      error?.code === -32602 &&
+      /task\.ttl must be between 1000 and 3600000 milliseconds/u.test(error.message)
+  );
+
+  await assert.rejects(
+    client.request("tools/call", {
+      name: "ae.workspace.search_text",
+      arguments: {
+        query: "needle",
+        mode: "literal",
+        limit: 10
+      },
+      task: {
+        ttl: 3_600_001
+      }
+    }),
+    (error) =>
+      error?.code === -32602 &&
+      /task\.ttl must be between 1000 and 3600000 milliseconds/u.test(error.message)
+  );
+});
+
 test("spiki launcher supports cancelling task-augmented requests", { timeout: 60000 }, async (t) => {
   const context = await createTestEnvironment({
     prefix: "spiki-task-cancel-",
