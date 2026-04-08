@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use globset::{Glob, GlobSetBuilder};
 
 use crate::model::{
@@ -20,9 +22,19 @@ impl Runtime {
         view: &ViewContext,
         input: WorkspaceStatusInput,
     ) -> SpikiResult<WorkspaceStatusOutput> {
-        let coverage = self.refresh_workspace(view, None)?;
         let include_backends = input.include_backends.unwrap_or(true);
         let include_coverage = input.include_coverage.unwrap_or(true);
+        let skip_refresh = if include_backends || include_coverage {
+            false
+        } else {
+            let meta = view.workspace.meta.lock();
+            !view.workspace.dirty.load(Ordering::Relaxed) && !meta.known_files.is_empty()
+        };
+        let coverage = if skip_refresh {
+            None
+        } else {
+            Some(self.refresh_workspace(view, None)?)
+        };
 
         Ok(WorkspaceStatusOutput {
             client_session_id: view.client_session_id.clone(),
@@ -30,7 +42,7 @@ impl Runtime {
             workspace_id: view.workspace_id.clone(),
             workspace_revision: self.current_revision(view),
             roots: view.roots.clone(),
-            coverage: include_coverage.then_some(coverage),
+            coverage: if include_coverage { coverage } else { None },
             backends: include_backends.then_some(detected_backends(view)),
             warnings: Vec::new(),
         })
@@ -289,5 +301,69 @@ impl Runtime {
 
     pub fn execution_error(error: super::SpikiError) -> ExecutionError {
         error.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::Ordering;
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::text::file_uri_from_path;
+
+    #[test]
+    fn workspace_status_skips_refresh_when_optional_sections_are_disabled() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("a.ts"), "export const first = 1;\n").unwrap();
+
+        let runtime = Runtime::new(Default::default());
+        let view = runtime
+            .upsert_view("session_test", &[file_uri_from_path(temp.path())])
+            .unwrap();
+
+        let initial = runtime
+            .workspace_status(
+                &view,
+                WorkspaceStatusInput {
+                    include_backends: Some(false),
+                    include_coverage: Some(true),
+                },
+            )
+            .unwrap();
+        assert_eq!(initial.workspace_revision, "rev_1");
+        assert_eq!(initial.coverage.unwrap().files_indexed, Some(1));
+
+        fs::write(temp.path().join("b.ts"), "export const second = 2;\n").unwrap();
+        view.workspace.dirty.store(false, Ordering::Relaxed);
+
+        let skipped = runtime
+            .workspace_status(
+                &view,
+                WorkspaceStatusInput {
+                    include_backends: Some(false),
+                    include_coverage: Some(false),
+                },
+            )
+            .unwrap();
+        assert_eq!(skipped.workspace_revision, "rev_1");
+        assert_eq!(skipped.coverage, None);
+        assert_eq!(skipped.backends, None);
+
+        view.workspace.dirty.store(true, Ordering::Relaxed);
+
+        let refreshed = runtime
+            .workspace_status(
+                &view,
+                WorkspaceStatusInput {
+                    include_backends: Some(false),
+                    include_coverage: Some(true),
+                },
+            )
+            .unwrap();
+        assert_eq!(refreshed.workspace_revision, "rev_2");
+        assert_eq!(refreshed.coverage.unwrap().files_indexed, Some(2));
     }
 }
