@@ -1,5 +1,6 @@
 let buffer = Buffer.alloc(0);
 const documents = new Map();
+const mode = process.argv[2] ?? "success";
 
 function writeMessage(message) {
   const payload = Buffer.from(JSON.stringify(message), "utf8");
@@ -71,6 +72,22 @@ process.stdin.on("data", (chunk) => {
     }
 
     if (message.method === "textDocument/definition") {
+      if (mode === "error") {
+        writeMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: {
+            code: -32001,
+            message: "Definition failed by test backend"
+          }
+        });
+        continue;
+      }
+
+      if (mode === "timeout") {
+        continue;
+      }
+
       const uri = message.params.textDocument.uri;
       const text = documents.get(uri) ?? "";
       const matchIndex = text.indexOf("answer");

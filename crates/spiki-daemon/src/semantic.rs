@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -16,6 +17,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
 use crate::protocol::{read_frame, write_frame};
+
+const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) struct SemanticSupervisor {
     backends: Mutex<HashMap<String, Arc<Mutex<LspBackend>>>>,
@@ -459,25 +462,35 @@ async fn request_response(backend: &mut LspBackend, method: &str, params: Value)
     )
     .await?;
 
-    loop {
-        let Some(message) = read_frame(&mut backend.reader).await? else {
-            return Err(anyhow!("semantic backend closed its stdio stream"));
-        };
-        if message.get("method").is_some() {
-            continue;
+    tokio::time::timeout(LSP_REQUEST_TIMEOUT, async {
+        loop {
+            let Some(message) = read_frame(&mut backend.reader).await? else {
+                return Err(anyhow!("semantic backend closed its stdio stream"));
+            };
+            if message.get("method").is_some() {
+                continue;
+            }
+            if message.get("id") != Some(&Value::String(request_id.clone())) {
+                continue;
+            }
+            if let Some(error) = message.get("error") {
+                return Err(anyhow!(
+                    "semantic backend request {} failed: {}",
+                    method,
+                    error
+                ));
+            }
+            return Ok(message.get("result").cloned().unwrap_or(Value::Null));
         }
-        if message.get("id") != Some(&Value::String(request_id.clone())) {
-            continue;
-        }
-        if let Some(error) = message.get("error") {
-            return Err(anyhow!(
-                "semantic backend request {} failed: {}",
-                method,
-                error
-            ));
-        }
-        return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-    }
+    })
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "semantic backend request {} timed out after {}ms",
+            method,
+            LSP_REQUEST_TIMEOUT.as_millis()
+        )
+    })?
 }
 
 fn parse_definition_response(result: Value) -> Result<Vec<LocationRef>> {

@@ -1181,8 +1181,9 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
   assert.equal(JSON.parse(finalStatus.stdout).reachable, false);
 });
 
-test("spiki launcher supports configured lsp definition requests", { timeout: 60000 }, async (t) => {
+async function createSemanticLauncherSession(t, options = {}) {
   const fakeLspPath = path.join(projectRoot, "tests", "lib", "fake-lsp-server.mjs");
+  const serverArgs = options.serverArgs ?? [];
   const context = await createTestEnvironment({
     prefix: "spiki-semantic-",
     files: {
@@ -1209,7 +1210,8 @@ test("spiki launcher supports configured lsp definition requests", { timeout: 60
         "    provider: fake-typescript",
         `    command: ${JSON.stringify(process.execPath)}`,
         "    args:",
-        `      - ${JSON.stringify(fakeLspPath)}`
+        `      - ${JSON.stringify(fakeLspPath)}`,
+        ...serverArgs.map((arg) => `      - ${JSON.stringify(arg)}`)
       ].join("\n")
     }
   });
@@ -1233,6 +1235,15 @@ test("spiki launcher supports configured lsp definition requests", { timeout: 60
   });
 
   await client.initialize();
+  return {
+    client,
+    context,
+    definitionUri: pathToFileURL(path.join(context.workspaceDir, "src", "index.ts")).toString()
+  };
+}
+
+test("spiki launcher supports configured lsp definition requests", { timeout: 60000 }, async (t) => {
+  const { client, context, definitionUri } = await createSemanticLauncherSession(t);
 
   const statusBefore = await client.request("tools/call", {
     name: "ae.semantic.status",
@@ -1259,7 +1270,7 @@ test("spiki launcher supports configured lsp definition requests", { timeout: 60
     name: "ae.symbol.definition",
     arguments: {
       language: "typescript",
-      uri: pathToFileURL(path.join(context.workspaceDir, "src", "index.ts")).toString(),
+      uri: definitionUri,
       position: {
         line: 2,
         character: 10
@@ -1269,12 +1280,71 @@ test("spiki launcher supports configured lsp definition requests", { timeout: 60
   assert.equal(definition.isError, false);
   assert.equal(definition.structuredContent.backend.provider, "fake-typescript");
   assert.equal(definition.structuredContent.definitions.length, 1);
-  assert.equal(
-    definition.structuredContent.definitions[0].uri,
-    pathToFileURL(path.join(context.workspaceDir, "src", "index.ts")).toString()
-  );
+  assert.equal(definition.structuredContent.definitions[0].uri, definitionUri);
   assert.deepEqual(definition.structuredContent.definitions[0].range, {
     start: { line: 0, character: 13 },
     end: { line: 0, character: 19 }
   });
+});
+
+test("spiki launcher surfaces configured lsp definition backend errors", { timeout: 60000 }, async (t) => {
+  const { client, definitionUri } = await createSemanticLauncherSession(t, {
+    serverArgs: ["error"]
+  });
+
+  const ensured = await client.request("tools/call", {
+    name: "ae.semantic.ensure",
+    arguments: {
+      language: "typescript",
+      action: "warm"
+    }
+  });
+  assert.equal(ensured.isError, false);
+
+  const definition = await client.request("tools/call", {
+    name: "ae.symbol.definition",
+    arguments: {
+      language: "typescript",
+      uri: definitionUri,
+      position: {
+        line: 2,
+        character: 10
+      }
+    }
+  });
+  assert.equal(definition.isError, true);
+  assert.equal(definition.structuredContent.code, "AE_SEMANTIC_ERROR");
+  assert.match(definition.structuredContent.message, /textDocument\/definition/u);
+  assert.match(definition.structuredContent.message, /Definition failed by test backend/u);
+});
+
+test("spiki launcher times out stalled lsp definition requests", { timeout: 60000 }, async (t) => {
+  const { client, definitionUri } = await createSemanticLauncherSession(t, {
+    serverArgs: ["timeout"]
+  });
+
+  const ensured = await client.request("tools/call", {
+    name: "ae.semantic.ensure",
+    arguments: {
+      language: "typescript",
+      action: "warm"
+    }
+  });
+  assert.equal(ensured.isError, false);
+
+  const definition = await client.request("tools/call", {
+    name: "ae.symbol.definition",
+    arguments: {
+      language: "typescript",
+      uri: definitionUri,
+      position: {
+        line: 2,
+        character: 10
+      }
+    }
+  });
+  assert.equal(definition.isError, true);
+  assert.equal(definition.structuredContent.code, "AE_SEMANTIC_ERROR");
+  assert.match(definition.structuredContent.message, /textDocument\/definition/u);
+  assert.match(definition.structuredContent.message, /timed out after 2000ms/u);
 });
