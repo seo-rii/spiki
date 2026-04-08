@@ -1088,14 +1088,57 @@ test("spiki CLI and launcher bridge manage daemon lifecycle", { timeout: 60000 }
     "export const preparedValue = needle;\n"
   );
 
-  const discard = await client.request("tools/call", {
+  const prepareDiscardPlan = await client.request("tools/call", {
+    name: "ae.edit.prepare_plan",
+    arguments: {
+      fileEdits: [
+        {
+          uri: pathToFileURL(path.join(context.workspaceDir, "nested", "example.ts")).toString(),
+          edits: [
+            {
+              range: {
+                start: { line: 0, character: 13 },
+                end: { line: 0, character: 26 }
+              },
+              newText: "discardedValue"
+            }
+          ]
+        }
+      ]
+    }
+  });
+  assert.equal(prepareDiscardPlan.isError, false);
+
+  const discardPreparedPlan = await client.request("tools/call", {
+    name: "ae.edit.discard_plan",
+    arguments: {
+      planId: prepareDiscardPlan.structuredContent.planId
+    }
+  });
+  assert.equal(discardPreparedPlan.isError, false);
+  assert.equal(discardPreparedPlan.structuredContent.discarded, true);
+  assert.equal(
+    await readFile(path.join(context.workspaceDir, "nested", "example.ts"), "utf8"),
+    "export const preparedValue = needle;\n"
+  );
+
+  const inspectDiscardedPlan = await client.request("tools/call", {
+    name: "ae.edit.inspect_plan",
+    arguments: {
+      planId: prepareDiscardPlan.structuredContent.planId
+    }
+  });
+  assert.equal(inspectDiscardedPlan.isError, true);
+  assert.equal(inspectDiscardedPlan.structuredContent.code, "AE_NOT_FOUND");
+
+  const discardMissingPlan = await client.request("tools/call", {
     name: "ae.edit.discard_plan",
     arguments: {
       planId: "plan_missing"
     }
   });
-  assert.equal(discard.isError, false);
-  assert.equal(discard.structuredContent.discarded, false);
+  assert.equal(discardMissingPlan.isError, false);
+  assert.equal(discardMissingPlan.structuredContent.discarded, false);
 
   const apply = await client.request("tools/call", {
     name: "ae.edit.apply_plan",
