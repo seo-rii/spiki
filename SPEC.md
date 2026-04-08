@@ -6,6 +6,9 @@
 레퍼런스 구현 목표: `npx` launcher + Rust daemon  
 문서 성격: 제품/프로토콜/런타임 통합 사양
 
+> 현재 트리의 구현 계약(current contract)은 `README.md`와 `docs/README.md`의 implemented vs planned surface를 우선 기준으로 삼아야 한다.
+> `SPEC.md`는 이미 구현된 계약과 미래 설계를 함께 담는 design 문서이므로, 여기 적힌 모든 surface를 현재 `main`이 이미 보장한다고 읽으면 안 된다.
+
 ---
 
 ## 1. 개요
